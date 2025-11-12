@@ -1,0 +1,15 @@
+# Keep this .gitignore itself
+!/.gitignore
+
+# Unignore the specified directories but ignore their contents
+!/context/
+/context/*
+!/jsons/
+/jsons/*
+!/docs/
+!/docs/**
+!/tocomplete/
+/tocomplete/*
+
+# Keep .gitkeep files to preserve directory structure
+!**/.gitkeep

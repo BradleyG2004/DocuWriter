@@ -20,13 +20,14 @@ Le système extrait les documents Word, identifie les zones à compléter (déli
 DocuWriter/
 ├── docker-compose.yml          # Configuration des services
 ├── context/                    # Documents de référence (.docx)
+├── tocomplete/                 # Document principal à compléter (.docx)
 ├── jsons/                      # Fichiers JSON générés
 ├── python/
 │   ├── Dockerfile
 │   ├── JsonFormater.py         # Extraction structurée des documents
 │   ├── send_to_ai.py           # Génération IA des propositions
 │   └── requirements.txt
-└── SIMULREM-v1-*.docx         # Document principal à compléter (à la racine)
+└── README.md
 ```
 
 ## 🚀 Utilisation
@@ -34,7 +35,7 @@ DocuWriter/
 ### 1. Préparation des fichiers
 
 - Placez vos **documents de contexte** (.docx) dans le dossier `context/`
-- Placez le **document principal** à compléter (.docx) à la racine du projet
+- Placez le **document principal** à compléter (.docx) dans le dossier `tocomplete/`
 - Dans le document principal, marquez les zones à compléter avec `<here>...</here>`
 
 ### 2. Lancement des conteneurs
@@ -170,7 +171,7 @@ Pour gérer les documents volumineux, `send_to_ai.py` :
 
 ### Aucune zone détectée
 - Vérifiez que les balises sont bien `<here>...</here>`
-- Assurez-vous que le document principal est à la racine
+- Assurez-vous que le document principal est dans le dossier `tocomplete/`
 - Vérifiez qu'il n'y a pas de fichiers `~$*.docx` ouverts
 
 ## 📝 Notes

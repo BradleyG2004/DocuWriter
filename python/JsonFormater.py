@@ -244,16 +244,19 @@ def main():
     context_global_path = os.path.join(json_dir, "context_global.json")
     merge_json_files(context_jsons, context_global_path)
 
-    # 2️⃣ Transformer le fichier principal à la racine avec structure
+    # 2️⃣ Transformer le fichier principal dans tocomplete/ avec structure
+    tocomplete_dir = os.path.join(root_dir, "tocomplete")
     main_docx = None
-    for f in os.listdir(root_dir):
-        # Ignorer les fichiers temporaires Word (commencent par ~$)
-        if f.endswith(".docx") and not f.startswith("~$"):
-            main_docx = os.path.join(root_dir, f)
-            break
+    
+    if os.path.exists(tocomplete_dir):
+        for f in os.listdir(tocomplete_dir):
+            # Ignorer les fichiers temporaires Word (commencent par ~$)
+            if f.endswith(".docx") and not f.startswith("~$"):
+                main_docx = os.path.join(tocomplete_dir, f)
+                break
 
     if not main_docx:
-        print("[ERREUR] Aucun fichier principal .docx trouvé à la racine.")
+        print("[ERREUR] Aucun fichier principal .docx trouvé dans tocomplete/.")
         sys.exit(1)
 
     principal_json = os.path.join(json_dir, "principal.json")

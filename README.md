@@ -176,6 +176,7 @@ Pour gérer les documents volumineux, `send_to_ai.py` :
 
 ## 📝 Notes
 
+- Veuillez à bien installer un LLM sur Ollama avant de debuter .
 - Les propositions de l'IA sont **indicatives** et doivent être relues
 - Le contexte est limité à 5000 caractères par requête pour optimiser les performances
 - Les originaux des documents Word ne sont jamais modifiés

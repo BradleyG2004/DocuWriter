@@ -192,7 +192,7 @@ def convert_docx_to_json(input_path, output_path, use_structure=False):
     
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
-    print(f"[OK] {input_path} → {output_path}")
+    print(f"[OK] {input_path} -> {output_path}")
 
 
 
@@ -203,7 +203,7 @@ def merge_json_files(input_files, output_file):
             merged["context_files"].append(json.load(f))
     with open(output_file, "w", encoding="utf-8") as f:
         json.dump(merged, f, indent=2, ensure_ascii=False)
-    print(f"[OK] Contexte global créé : {output_file}")
+    print(f"[OK] Contexte global cree : {output_file}")
 
 
 # --- Programme principal ---
@@ -217,6 +217,8 @@ def main():
     # Vider le contenu du dossier jsons (mais pas le dossier lui-même car c'est un volume monté)
     if os.path.exists(json_dir):
         for filename in os.listdir(json_dir):
+            if filename == '.gitkeep':  # Garder le .gitkeep
+                continue
             file_path = os.path.join(json_dir, filename)
             try:
                 if os.path.isfile(file_path) or os.path.islink(file_path):
@@ -224,16 +226,18 @@ def main():
                 elif os.path.isdir(file_path):
                     shutil.rmtree(file_path)
             except Exception as e:
-                print(f'⚠️  Erreur lors de la suppression de {file_path}: {e}')
-        print(f"🗑️  Contenu du dossier jsons vidé")
+                print(f'[WARN] Erreur lors de la suppression de {file_path}: {e}')
+        print("[INFO] Contenu du dossier jsons vide")
     
     # S'assurer que le dossier existe
     os.makedirs(json_dir, exist_ok=True)
 
-    # 1️⃣ Transformer les fichiers du dossier context/
+    # [1] Transformer les fichiers du dossier context/
     context_jsons = []
     for fname in os.listdir(context_dir):
-        # Ignorer les fichiers temporaires Word (commencent par ~$)
+        # Ignorer les fichiers temporaires Word et .gitkeep
+        if fname == '.gitkeep':
+            continue
         if fname.endswith(".docx") and not fname.startswith("~$"):
             src = os.path.join(context_dir, fname)
             dst = os.path.join(json_dir, f"{os.path.splitext(fname)[0]}.json")
@@ -244,26 +248,28 @@ def main():
     context_global_path = os.path.join(json_dir, "context_global.json")
     merge_json_files(context_jsons, context_global_path)
 
-    # 2️⃣ Transformer le fichier principal dans tocomplete/ avec structure
+    # [2] Transformer le fichier principal dans tocomplete/ avec structure
     tocomplete_dir = os.path.join(root_dir, "tocomplete")
     main_docx = None
     
     if os.path.exists(tocomplete_dir):
         for f in os.listdir(tocomplete_dir):
-            # Ignorer les fichiers temporaires Word (commencent par ~$)
+            # Ignorer les fichiers temporaires Word et .gitkeep
+            if f == '.gitkeep':
+                continue
             if f.endswith(".docx") and not f.startswith("~$"):
                 main_docx = os.path.join(tocomplete_dir, f)
                 break
 
     if not main_docx:
-        print("[ERREUR] Aucun fichier principal .docx trouvé dans tocomplete/.")
+        print("[ERREUR] Aucun fichier principal .docx trouve dans tocomplete/.")
         sys.exit(1)
 
     principal_json = os.path.join(json_dir, "principal.json")
     # Utiliser use_structure=True pour extraire uniquement headings et <here>...</here>
     convert_docx_to_json(main_docx, principal_json, use_structure=True)
 
-    print(f"\n✅ Conversion terminée.\n- Contexte global : {context_global_path}\n- Principal : {principal_json}")
+    print(f"\n[OK] Conversion terminee.\n- Contexte global : {context_global_path}\n- Principal : {principal_json}")
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 ﻿import os
 import re
 import json
-import requests
+from llama_cpp import Llama
 
 
 def load_json(path):
@@ -82,12 +82,45 @@ def extract_placeholders_from_section(section, placeholders, path_prefix=""):
 
 
 
-def complete_text_with_ai(context_text, placeholders_batch, model="llama3.1"):
+# Variable globale pour le modèle LLM (chargé une seule fois)
+_llm_model = None
+
+def get_llm_model(model_path=None):
     """
-    Traite un lot de placeholders à la fois
+    Charge le modèle LLM une seule fois et le réutilise
     """
-    host = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+    global _llm_model
     
+    if _llm_model is None:
+        if model_path is None:
+            # Chemin par défaut vers le modèle (à adapter selon votre configuration)
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            root_dir = os.path.dirname(base_dir)
+            model_path = os.path.join(root_dir, "models", "model.gguf")
+        
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(
+                f"Modele non trouve: {model_path}\n"
+                f"Telechargez un modele GGUF depuis https://huggingface.co/models?library=gguf\n"
+                f"Exemples: Llama-3.2, Mistral, Phi-3, etc."
+            )
+        
+        print(f"[INFO] Chargement du modele: {model_path}")
+        _llm_model = Llama(
+            model_path=model_path,
+            n_ctx=4096,  # Contexte de 4096 tokens
+            n_threads=4,  # Nombre de threads CPU
+            verbose=False
+        )
+        print("[INFO] Modele charge avec succes!")
+    
+    return _llm_model
+
+
+def complete_text_with_ai(context_text, placeholders_batch, model_path=None):
+    """
+    Traite un lot de placeholders à la fois avec llama-cpp-python
+    """
     # Construire la liste des placeholders pour le prompt
     placeholders_text = ""
     for i, ph in enumerate(placeholders_batch):
@@ -95,8 +128,7 @@ def complete_text_with_ai(context_text, placeholders_batch, model="llama3.1"):
         original = ph.get("original", "")
         placeholders_text += f"\n[{i+1}] Section: {section_path}\nOriginal: {original[:200]}...\n"
 
-    prompt = f"""
-You are an assistant whose job is to replace placeholder zones in a document.
+    prompt = f"""You are an assistant whose job is to replace placeholder zones in a document.
 You will be given a context (background documents) and a list of placeholder zones
 that need to be replaced with concrete, adapted content derived from the context.
 
@@ -129,27 +161,26 @@ Remember: OUTPUT VALID JSON ONLY, NO COMMENTS.
 """
 
     try:
-        response = requests.post(
-            f"{host}/api/generate",
-            json={"model": model, "prompt": prompt, "stream": False},
-            timeout=300  # 5 minutes par batch
+        llm = get_llm_model(model_path)
+        
+        # Génération avec llama-cpp-python
+        response = llm(
+            prompt,
+            max_tokens=2048,
+            temperature=0.7,
+            top_p=0.9,
+            stop=["```", "\n\n\n"],
+            echo=False
         )
-    except requests.exceptions.Timeout:
-        return {"error": "Timeout: Le modèle a pris trop de temps à répondre."}
-    except requests.exceptions.RequestException as e:
-        return {"error": f"Erreur de connexion: {str(e)}"}
+        
+        content = response["choices"][0]["text"].strip()
+        
+    except FileNotFoundError as e:
+        return {"error": str(e)}
+    except Exception as e:
+        return {"error": f"Erreur lors de la generation: {str(e)}"}
 
-    if response.status_code != 200:
-        return {"error": f"{response.status_code} - {response.text}"}
-
-    try:
-        res = response.json()
-        content = res.get("response") if isinstance(res, dict) else None
-        if content is None:
-            content = json.dumps(res)
-    except Exception:
-        content = response.text
-
+    # Parser la réponse JSON
     try:
         parsed = json.loads(content)
     except Exception:
@@ -208,8 +239,8 @@ def main():
                     "context_path": f"paragraph[{idx}]"
                 })
 
-    print("🔹 Envoi du contexte et du document à l'IA...")
-    print(f"   📊 {len(placeholders)} zones <here>...</here> détectées")
+    print("[INFO] Envoi du contexte et du document a l'IA...")
+    print(f"   [INFO] {len(placeholders)} zones <here>...</here> detectees")
     
     # Traiter par lots de 5 placeholders à la fois
     BATCH_SIZE = 5
@@ -221,12 +252,12 @@ def main():
         end_idx = min(start_idx + BATCH_SIZE, len(placeholders))
         batch = placeholders[start_idx:end_idx]
         
-        print(f"   ⏳ Traitement du lot {batch_num + 1}/{total_batches} ({len(batch)} zones)...")
+        print(f"   [BATCH {batch_num + 1}/{total_batches}] Traitement de {len(batch)} zones...")
         
         model_response = complete_text_with_ai(context_text, batch)
         
         if isinstance(model_response, dict) and model_response.get("error"):
-            print(f"   ⚠️  Erreur pour le lot {batch_num + 1}: {model_response.get('error')}")
+            print(f"   [WARN] Erreur pour le lot {batch_num + 1}: {model_response.get('error')}")
             continue
         
         parsed = model_response if isinstance(model_response, dict) else {}
@@ -258,18 +289,18 @@ def main():
                 
                 all_replacement_pairs.append(pair)
         
-        print(f"   ✅ Lot {batch_num + 1} traité : {len(replacements)} remplacements générés")
+        print(f"   [OK] Lot {batch_num + 1} traite : {len(replacements)} remplacements generes")
 
     if not all_replacement_pairs and total_batches > 0:
         error_result = {
-            "error": "Aucun remplacement n'a pu être généré",
+            "error": "Aucun remplacement n'a pu etre genere",
             "total_placeholders": len(placeholders),
             "total_batches_attempted": total_batches
         }
         output_json_path = os.path.join(json_dir, "completed_document.json")
         with open(output_json_path, "w", encoding="utf-8") as f:
             json.dump(error_result, f, indent=2, ensure_ascii=False)
-        print(f"❌ Erreur : Aucun remplacement généré")
+        print(f"[ERROR] Aucun remplacement genere")
         return
 
     result_json = {
@@ -286,9 +317,9 @@ def main():
     with open(output_json_path, "w", encoding="utf-8") as f:
         json.dump(result_json, f, indent=2, ensure_ascii=False)
 
-    print(f"\n✅ Document complété enregistré dans :")
+    print(f"\n[OK] Document complete enregistre dans :")
     print(f"   - JSON: {output_json_path}")
-    print(f"   📝 {len(all_replacement_pairs)}/{len(placeholders)} remplacements proposés")
+    print(f"   [OK] {len(all_replacement_pairs)}/{len(placeholders)} remplacements proposes")
 
 
 if __name__ == "__main__":

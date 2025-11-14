@@ -95,40 +95,50 @@ def complete_text_with_ai(context_text, placeholders_batch, model_name="gemma2:2
         original = ph.get("original", "")
         placeholders_text += f"\n[{i+1}] Section: {section_path}\nOriginal: {original[:200]}...\n"
 
-    prompt = f"""You are an assistant whose job is to replace placeholder zones in a document.
-You will be given a context (background documents) and a list of placeholder zones
-that need to be replaced with concrete, adapted content derived from the context.
+    prompt = f"""Vous êtes un assistant de documentation technique. Votre rôle est de générer le contenu des sections de documentation en vous basant strictement sur les informations extraites des documents fournis (cadrage, spécifications, manuel, fichiers d'environnement).
 
-Instructions:
-- For each placeholder, provide a replacement text adapted to the context
-- Return a VALID JSON object ONLY (no comments, no additional text) with this structure:
-  {{
-    "replacements": [
-      {{
-        "index": 0,
-        "replacement": "the replacement text"
-      }}
-    ]
-  }}
+CONSIGNES IMPORTANTES :
+- Vous devez fournir EXACTEMENT {len(placeholders_batch)} remplacements (un pour chaque zone marquée par <here></here>)
+- Le style doit être concis, structuré et professionnel
+- Rédigez en français
+- Basez-vous UNIQUEMENT sur les informations présentes dans le contexte fourni
+- Chaque remplacement doit faire 2 à 4 phrases
 
-IMPORTANT: 
-- Output VALID JSON only (no // comments, no extra text)
-- Provide concise, useful replacement text (2-4 sentences)
-- Each replacement should be self-contained
-- Do NOT use comments like // or /* */ in the JSON
-- Use the index number from the list below
+FORMAT DE SORTIE REQUIS :
+Retournez un objet JSON VALIDE UNIQUEMENT (sans commentaires, sans texte supplémentaire) avec cette structure :
+{{
+  "replacements": [
+    {{
+      "index": 0,
+      "replacement": "Texte de remplacement basé sur le contexte"
+    }},
+    {{
+      "index": 1,
+      "replacement": "Texte de remplacement basé sur le contexte"
+    }}
+    ... (continuez pour tous les {len(placeholders_batch)} emplacements)
+  ]
+}}
 
-Context:
+EXIGENCES CRITIQUES :
+- Sortie JSON VALIDE uniquement (pas de markdown, pas de commentaires, pas de texte supplémentaire)
+- Vous DEVEZ fournir les {len(placeholders_batch)} remplacements (index 0 à {len(placeholders_batch)-1})
+- NE sautez AUCUN index
+- N'ajoutez PAS de commentaires comme // ou /* */
+- Basez chaque réponse sur le contexte fourni ci-dessous
+
+CONTEXTE (documents de référence) :
 {context_text[:5000]}
 
-Placeholders to replace:
+ZONES À COMPLÉTER (VOUS DEVEZ TOUTES LES TRAITER - {len(placeholders_batch)} au total) :
 {placeholders_text}
 
-Remember: OUTPUT VALID JSON ONLY, NO COMMENTS.
+RAPPEL : SORTIE JSON VALIDE AVEC EXACTEMENT {len(placeholders_batch)} REMPLACEMENTS, AUCUN COMMENTAIRE.
 """
 
     try:
         # Appel à Ollama
+        print(f"   [DEBUG] Envoi de {len(placeholders_batch)} placeholders a Ollama...")
         response = ollama.chat(
             model=model_name,
             messages=[
@@ -140,29 +150,51 @@ Remember: OUTPUT VALID JSON ONLY, NO COMMENTS.
         )
         
         content = response['message']['content'].strip()
+        print(f"   [DEBUG] Reponse brute recue ({len(content)} caracteres)")
         
     except Exception as e:
+        print(f"   [ERROR] Exception Ollama: {str(e)}")
         return {"error": f"Erreur lors de la generation: {str(e)}"}
 
     # Parser la réponse JSON
     try:
+        # Supprimer les balises markdown si présentes
+        if content.startswith('```'):
+            lines = content.split('\n')
+            content = '\n'.join(lines[1:-1]) if len(lines) > 2 else content
+            print("   [DEBUG] Balises markdown supprimees")
+        
         parsed = json.loads(content)
-    except Exception:
+        print(f"   [DEBUG] JSON parse avec succes")
+    except Exception as e:
+        print(f"   [WARN] Erreur parsing JSON direct: {str(e)}")
         # Nettoyer le contenu avant de le parser
         content_clean = re.sub(r'//.*?$', '', content, flags=re.MULTILINE)
         content_clean = re.sub(r'/\*.*?\*/', '', content_clean, flags=re.DOTALL)
         
         try:
             parsed = json.loads(content_clean)
+            print(f"   [DEBUG] JSON parse apres nettoyage")
         except Exception:
+            print(f"   [WARN] Tentative d'extraction du JSON...")
             m = re.search(r"\{.*\}", content_clean, flags=re.S)
             if m:
                 try:
                     parsed = json.loads(m.group(0))
+                    print(f"   [DEBUG] JSON extrait et parse")
                 except Exception:
+                    print(f"   [ERROR] Impossible de parser le JSON extrait")
                     return {"error": "Could not parse model response as JSON", "raw": content}
             else:
+                print(f"   [ERROR] Aucun JSON trouve dans la reponse")
                 return {"error": "No JSON found in model response", "raw": content}
+    
+    # Vérifier le nombre de remplacements
+    replacements = parsed.get("replacements", [])
+    print(f"   [DEBUG] Nombre de remplacements recus: {len(replacements)}/{len(placeholders_batch)}")
+    
+    if len(replacements) < len(placeholders_batch):
+        print(f"   [WARN] Ollama n'a retourne que {len(replacements)} remplacements sur {len(placeholders_batch)} demandes")
 
     return parsed
 
@@ -207,8 +239,8 @@ def main():
     print("[INFO] Envoi du contexte et du document a l'IA...")
     print(f"   [INFO] {len(placeholders)} zones <here>...</here> detectees")
     
-    # Traiter par lots de 5 placeholders à la fois
-    BATCH_SIZE = 5
+    # Traiter par lots de 3 placeholders à la fois (réduit pour améliorer la fiabilité)
+    BATCH_SIZE = 3
     all_replacement_pairs = []
     total_batches = (len(placeholders) + BATCH_SIZE - 1) // BATCH_SIZE
     

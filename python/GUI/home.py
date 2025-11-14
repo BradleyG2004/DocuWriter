@@ -386,43 +386,92 @@ class DocuWriterApp(customtkinter.CTk):
         print(f"  - {self.file_to_complete}")
         print("\n🚀 Lancement du traitement...")
         
-        # Afficher un message de succès à l'utilisateur
-        success_window = customtkinter.CTkToplevel(self)
-        success_window.title("✅ Traitement lancé")
-        success_window.geometry("400x200")
-        success_window.configure(fg_color="white")
-        success_window.transient(self)
-        success_window.grab_set()
+        # Créer la fenêtre de progression
+        self.progress_window = customtkinter.CTkToplevel(self)
+        self.progress_window.title("⏳ Traitement en cours")
+        self.progress_window.geometry("450x280")
+        self.progress_window.configure(fg_color="white")
+        self.progress_window.transient(self)
+        self.progress_window.grab_set()
         
+        # Empêcher la fermeture de la fenêtre
+        self.progress_window.protocol("WM_DELETE_WINDOW", lambda: None)
+        
+        # Titre
         title_label = customtkinter.CTkLabel(
-            success_window,
-            text="✅ Traitement en cours",
+            self.progress_window,
+            text="⏳ Traitement en cours",
             font=customtkinter.CTkFont(size=18, weight="bold"),
-            text_color="#2ecc71"
+            text_color="#3498db"
         )
         title_label.pack(padx=20, pady=(20, 10))
         
-        info_label = customtkinter.CTkLabel(
-            success_window,
-            text="Les fichiers ont été validés avec succès.\nLe traitement va démarrer...",
+        # Label de statut
+        self.progress_status_label = customtkinter.CTkLabel(
+            self.progress_window,
+            text="Validation des fichiers...",
             font=customtkinter.CTkFont(size=12),
             text_color="#333333"
         )
-        info_label.pack(padx=20, pady=10)
+        self.progress_status_label.pack(padx=20, pady=10)
         
-        close_button = customtkinter.CTkButton(
-            success_window,
-            text="OK",
-            command=success_window.destroy,
-            fg_color="#1a1a1a",
-            hover_color="#333333",
-            text_color="white",
-            corner_radius=3
+        # Barre de progression indéterminée (loader)
+        self.progress_bar = customtkinter.CTkProgressBar(
+            self.progress_window,
+            mode="indeterminate",
+            width=380,
+            height=8,
+            progress_color="#3498db"
         )
-        close_button.pack(padx=20, pady=(10, 20))
+        self.progress_bar.pack(padx=20, pady=10)
+        self.progress_bar.start()
+        
+        # Frame pour les détails
+        details_frame = customtkinter.CTkFrame(
+            self.progress_window,
+            fg_color="#f8f9fa",
+            border_width=1,
+            border_color="#e0e0e0"
+        )
+        details_frame.pack(padx=20, pady=10, fill="both", expand=True)
+        
+        # Label de détails
+        self.progress_details_label = customtkinter.CTkLabel(
+            details_frame,
+            text="Préparation...",
+            font=customtkinter.CTkFont(size=10),
+            text_color="#666666",
+            anchor="w",
+            justify="left"
+        )
+        self.progress_details_label.pack(padx=15, pady=15, fill="both", expand=True)
         
         # Lancer le traitement réel dans un thread séparé
         threading.Thread(target=self.execute_processing, daemon=True).start()
+    
+    def update_progress(self, status, details=""):
+        """Mettre à jour le statut de progression dans l'interface"""
+        def update_ui():
+            if hasattr(self, 'progress_status_label') and self.progress_status_label.winfo_exists():
+                self.progress_status_label.configure(text=status)
+            if hasattr(self, 'progress_details_label') and details and self.progress_details_label.winfo_exists():
+                self.progress_details_label.configure(text=details)
+        
+        # Exécuter dans le thread principal
+        self.after(0, update_ui)
+    
+    def close_progress_window(self):
+        """Fermer la fenêtre de progression"""
+        def close_ui():
+            if hasattr(self, 'progress_window') and self.progress_window.winfo_exists():
+                try:
+                    self.progress_bar.stop()
+                    self.progress_window.destroy()
+                except:
+                    pass
+        
+        # Exécuter dans le thread principal
+        self.after(0, close_ui)
     
     def execute_processing(self):
         """Exécuter le traitement des fichiers"""
@@ -442,6 +491,7 @@ class DocuWriterApp(customtkinter.CTk):
             print(f"📁 Dossier tocomplete: {tocomplete_dir}")
             
             # 1. Vider et copier les fichiers de contexte
+            self.update_progress("📚 Copie des fichiers de contexte...", f"Copie de {len(self.context_files)} fichier(s)...")
             print("\n📚 Copie des fichiers de contexte...")
             print(f"  📊 Nombre de fichiers: {len(self.context_files)}")
             
@@ -461,15 +511,17 @@ class DocuWriterApp(customtkinter.CTk):
                 print(f"  📁 Dossier context créé: {context_dir}")
             
             # Copier les nouveaux fichiers de contexte
-            for file in self.context_files:
+            for i, file in enumerate(self.context_files, 1):
                 if not os.path.exists(file):
                     print(f"  ⚠️ Fichier introuvable (ignoré): {file}")
                     continue
                 dest = os.path.join(context_dir, os.path.basename(file))
                 shutil.copy2(file, dest)
                 print(f"  ✅ Copié: {os.path.basename(file)}")
+                self.update_progress("📚 Copie des fichiers de contexte...", f"Fichier {i}/{len(self.context_files)}: {os.path.basename(file)}")
             
             # 2. Vider et copier le fichier à compléter
+            self.update_progress("📄 Copie du fichier à compléter...", f"Copie de {os.path.basename(self.file_to_complete)}...")
             print("\n📄 Copie du fichier à compléter...")
             print(f"  📍 Fichier source: {self.file_to_complete}")
             print(f"  📍 Fichier existe: {os.path.exists(self.file_to_complete) if self.file_to_complete else 'None'}")
@@ -503,6 +555,7 @@ class DocuWriterApp(customtkinter.CTk):
             print(f"  ✅ Copié: {os.path.basename(self.file_to_complete)}")
             
             # 3. Exécuter FileFormater.py
+            self.update_progress("🔄 Extraction de la structure du document...", "Analyse des titres et placeholders...")
             print("\n🚀 Exécution de FileFormater.py...")
             Fileformater_path = os.path.join(project_root, "python", "FileFormater.py")
             
@@ -525,6 +578,7 @@ class DocuWriterApp(customtkinter.CTk):
                 print("\n✅ Traitement terminé avec succès!")
                 
                 # 4. Exécuter send_to_ai.py
+                self.update_progress("🤖 Génération des propositions avec l'IA...", "Cela peut prendre quelques instants...")
                 print("\n🚀 Exécution de send_to_ai.py...")
                 send_to_ai_path = os.path.join(project_root, "python", "send_to_ai.py")
                 
@@ -546,18 +600,25 @@ class DocuWriterApp(customtkinter.CTk):
                 if result_ai.returncode == 0:
                     print("\n✅ Génération des propositions terminée avec succès!")
                     
+                    # Fermer la fenêtre de progression
+                    self.close_progress_window()
+                    
                     # 5. Proposer de télécharger le fichier JSON généré
                     json_output_path = os.path.join(project_root, "jsons", "completed_document.json")
                     if os.path.exists(json_output_path):
-                        self.show_download_dialog(json_output_path)
+                        # Afficher le dialogue dans le thread principal
+                        self.after(100, lambda: self.show_download_dialog(json_output_path))
                     else:
                         print("⚠️ Fichier JSON non trouvé")
                 else:
+                    self.close_progress_window()
                     print(f"\n❌ Erreur lors de l'exécution de send_to_ai.py (code: {result_ai.returncode})")
             else:
+                self.close_progress_window()
                 print(f"\n❌ Erreur lors de l'exécution (code: {result.returncode})")
             
         except Exception as e:
+            self.close_progress_window()
             print(f"\n❌ Erreur lors du traitement: {str(e)}")
             import traceback
             traceback.print_exc()

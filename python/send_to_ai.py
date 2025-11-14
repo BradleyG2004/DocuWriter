@@ -1,7 +1,7 @@
 ﻿import os
 import re
 import json
-from llama_cpp import Llama
+import ollama
 
 
 def load_json(path):
@@ -82,44 +82,11 @@ def extract_placeholders_from_section(section, placeholders, path_prefix=""):
 
 
 
-# Variable globale pour le modèle LLM (chargé une seule fois)
-_llm_model = None
-
-def get_llm_model(model_path=None):
-    """
-    Charge le modèle LLM une seule fois et le réutilise
-    """
-    global _llm_model
-    
-    if _llm_model is None:
-        if model_path is None:
-            # Chemin par défaut vers le modèle (à adapter selon votre configuration)
-            base_dir = os.path.dirname(os.path.abspath(__file__))
-            root_dir = os.path.dirname(base_dir)
-            model_path = os.path.join(root_dir, "models", "model.gguf")
-        
-        if not os.path.exists(model_path):
-            raise FileNotFoundError(
-                f"Modele non trouve: {model_path}\n"
-                f"Telechargez un modele GGUF depuis https://huggingface.co/models?library=gguf\n"
-                f"Exemples: Llama-3.2, Mistral, Phi-3, etc."
-            )
-        
-        print(f"[INFO] Chargement du modele: {model_path}")
-        _llm_model = Llama(
-            model_path=model_path,
-            n_ctx=4096,  # Contexte de 4096 tokens
-            n_threads=4,  # Nombre de threads CPU
-            verbose=False
-        )
-        print("[INFO] Modele charge avec succes!")
-    
-    return _llm_model
 
 
-def complete_text_with_ai(context_text, placeholders_batch, model_path=None):
+def complete_text_with_ai(context_text, placeholders_batch, model_name="gemma2:2b"):
     """
-    Traite un lot de placeholders à la fois avec llama-cpp-python
+    Traite un lot de placeholders à la fois avec Ollama
     """
     # Construire la liste des placeholders pour le prompt
     placeholders_text = ""
@@ -161,22 +128,19 @@ Remember: OUTPUT VALID JSON ONLY, NO COMMENTS.
 """
 
     try:
-        llm = get_llm_model(model_path)
-        
-        # Génération avec llama-cpp-python
-        response = llm(
-            prompt,
-            max_tokens=2048,
-            temperature=0.7,
-            top_p=0.9,
-            stop=["```", "\n\n\n"],
-            echo=False
+        # Appel à Ollama
+        response = ollama.chat(
+            model=model_name,
+            messages=[
+                {
+                    'role': 'user',
+                    'content': prompt
+                }
+            ]
         )
         
-        content = response["choices"][0]["text"].strip()
+        content = response['message']['content'].strip()
         
-    except FileNotFoundError as e:
-        return {"error": str(e)}
     except Exception as e:
         return {"error": f"Erreur lors de la generation: {str(e)}"}
 
@@ -201,6 +165,7 @@ Remember: OUTPUT VALID JSON ONLY, NO COMMENTS.
                 return {"error": "No JSON found in model response", "raw": content}
 
     return parsed
+
 
 
 def main():

@@ -2,6 +2,8 @@
 import re
 import json
 import ollama
+import zipfile
+from docx import Document
 
 
 def load_json(path):
@@ -84,7 +86,7 @@ def extract_placeholders_from_section(section, placeholders, path_prefix=""):
 
 
 
-def complete_text_with_ai(context_text, placeholders_batch, model_name="gemma2:2b"):
+def complete_text_with_ai(context_text, placeholders_batch, model_name="llama3.1:8b"):
     """
     Traite un lot de placeholders à la fois avec Ollama
     """
@@ -100,9 +102,10 @@ def complete_text_with_ai(context_text, placeholders_batch, model_name="gemma2:2
 CONSIGNES IMPORTANTES :
 - Vous devez fournir EXACTEMENT {len(placeholders_batch)} remplacements (un pour chaque zone marquée par <here></here>)
 - Le style doit être concis, structuré et professionnel
-- Rédigez en français
-- Basez-vous UNIQUEMENT sur les informations présentes dans le contexte fourni
-- Chaque remplacement doit faire 2 à 4 phrases
+- Rédigez dans la langue majoritaire dans le contexte
+- Basez-vous fortement sur les informations présentes dans le contexte fourni afin d'appuyer et d'etayer vos propositions
+- N'inventez PAS d'informations non présentes dans le contexte
+- Chaque remplacement doit faire 3 à 5 phrases
 
 FORMAT DE SORTIE REQUIS :
 Retournez un objet JSON VALIDE UNIQUEMENT (sans commentaires, sans texte supplémentaire) avec cette structure :
@@ -197,6 +200,78 @@ RAPPEL : SORTIE JSON VALIDE AVEC EXACTEMENT {len(placeholders_batch)} REMPLACEME
         print(f"   [WARN] Ollama n'a retourne que {len(replacements)} remplacements sur {len(placeholders_batch)} demandes")
 
     return parsed
+
+
+
+def create_completed_docx(original_docx_path, replacement_pairs, output_path):
+    """
+    Crée un nouveau document Word en remplaçant les placeholders <here>...</here>
+    par les propositions du LLM
+    """
+    print(f"\n[INFO] Creation du document Word complete...")
+    
+    # Charger le document original
+    doc = Document(original_docx_path)
+    
+    # Créer un dictionnaire pour accès rapide aux remplacements
+    replacements_map = {}
+    for pair in replacement_pairs:
+        original_with_tags = pair.get("original_text_with_tags", "")
+        replacement = pair.get("proposed_replacement", "")
+        # Extraire le contenu entre <here> et </here>
+        match = re.search(r"<here>(.*?)</here>", original_with_tags, flags=re.S)
+        if match:
+            original_content = match.group(1).strip()
+            replacements_map[original_content] = replacement
+    
+    print(f"   [DEBUG] {len(replacements_map)} remplacements a appliquer")
+    
+    # Parcourir tous les paragraphes et remplacer
+    replacements_done = 0
+    for para in doc.paragraphs:
+        text = para.text
+        
+        # Vérifier si le paragraphe contient un placeholder
+        if '<here>' in text and '</here>' in text:
+            # Extraire le contenu entre les balises
+            match = re.search(r"<here>(.*?)</here>", text, flags=re.S)
+            if match:
+                original_content = match.group(1).strip()
+                
+                # Chercher le remplacement correspondant
+                if original_content in replacements_map:
+                    replacement_text = replacements_map[original_content]
+                    
+                    # Remplacer tout le contenu du paragraphe
+                    para.text = replacement_text
+                    replacements_done += 1
+                    print(f"   [OK] Remplacement {replacements_done} applique")
+    
+    # Sauvegarder le document complété
+    doc.save(output_path)
+    print(f"   [OK] Document Word complete sauvegarde: {output_path}")
+    print(f"   [OK] {replacements_done}/{len(replacements_map)} remplacements appliques")
+    
+    return replacements_done
+
+
+def create_zip_package(json_path, docx_path, zip_output_path):
+    """
+    Crée un fichier ZIP contenant le JSON et le DOCX
+    """
+    print(f"\n[INFO] Creation du package ZIP...")
+    
+    with zipfile.ZipFile(zip_output_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        # Ajouter le JSON
+        zipf.write(json_path, os.path.basename(json_path))
+        print(f"   [OK] Ajoute: {os.path.basename(json_path)}")
+        
+        # Ajouter le DOCX
+        zipf.write(docx_path, os.path.basename(docx_path))
+        print(f"   [OK] Ajoute: {os.path.basename(docx_path)}")
+    
+    print(f"   [OK] Package ZIP cree: {zip_output_path}")
+    return zip_output_path
 
 
 
@@ -314,9 +389,41 @@ def main():
     with open(output_json_path, "w", encoding="utf-8") as f:
         json.dump(result_json, f, indent=2, ensure_ascii=False)
 
-    print(f"\n[OK] Document complete enregistre dans :")
-    print(f"   - JSON: {output_json_path}")
+    print(f"\n[OK] JSON genere: {output_json_path}")
     print(f"   [OK] {len(all_replacement_pairs)}/{len(placeholders)} remplacements proposes")
+    
+    # Générer le document Word complété
+    tocomplete_dir = os.path.join(root_dir, "tocomplete")
+    original_docx = None
+    
+    # Trouver le fichier .docx original
+    if os.path.exists(tocomplete_dir):
+        for f in os.listdir(tocomplete_dir):
+            if f.endswith(".docx") and not f.startswith("~$"):
+                original_docx = os.path.join(tocomplete_dir, f)
+                break
+    
+    if original_docx and os.path.exists(original_docx):
+        output_docx_path = os.path.join(json_dir, "completed_document.docx")
+        
+        try:
+            replacements_done = create_completed_docx(original_docx, all_replacement_pairs, output_docx_path)
+            
+            # Créer le package ZIP
+            zip_output_path = os.path.join(json_dir, "completion_results.zip")
+            create_zip_package(output_json_path, output_docx_path, zip_output_path)
+            
+            print(f"\n[OK] Traitement termine avec succes !")
+            print(f"   - JSON: {output_json_path}")
+            print(f"   - DOCX: {output_docx_path}")
+            print(f"   - ZIP: {zip_output_path}")
+            
+        except Exception as e:
+            print(f"\n[WARN] Erreur lors de la creation du DOCX: {str(e)}")
+            print(f"   [INFO] Le JSON a ete genere: {output_json_path}")
+    else:
+        print(f"\n[WARN] Document original non trouve, seul le JSON a ete genere")
+        print(f"   - JSON: {output_json_path}")
 
 
 if __name__ == "__main__":

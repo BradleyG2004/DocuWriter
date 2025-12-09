@@ -291,11 +291,11 @@ class DocuWriterApp(customtkinter.CTk):
         )
         close_button.pack(padx=20, pady=(10, 20))
     
-    def show_download_dialog(self, json_path):
-        """Afficher une boîte de dialogue pour télécharger le JSON"""
+    def show_download_dialog(self, zip_path):
+        """Afficher une boîte de dialogue pour télécharger le package ZIP"""
         download_window = customtkinter.CTkToplevel(self)
         download_window.title("✅ Traitement terminé")
-        download_window.geometry("450x250")
+        download_window.geometry("450x280")
         download_window.configure(fg_color="white")
         
         # Rendre la fenêtre modale
@@ -314,7 +314,7 @@ class DocuWriterApp(customtkinter.CTk):
         # Message
         info_label = customtkinter.CTkLabel(
             download_window,
-            text="Les propositions de complétion ont été générées avec succès.\nVous pouvez maintenant télécharger le fichier JSON.",
+            text="Les propositions de complétion ont été générées avec succès.\nLe package contient :\n• Le fichier JSON avec les propositions\n• Le document Word complété",
             font=customtkinter.CTkFont(size=12),
             text_color="#333333",
             justify="center"
@@ -322,25 +322,25 @@ class DocuWriterApp(customtkinter.CTk):
         info_label.pack(padx=20, pady=10)
         
         # Bouton de téléchargement
-        def download_json():
+        def download_zip():
             save_path = filedialog.asksaveasfilename(
-                title="Enregistrer le fichier JSON",
-                defaultextension=".json",
-                filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
-                initialfile="completed_document.json"
+                title="Enregistrer le package",
+                defaultextension=".zip",
+                filetypes=[("ZIP files", "*.zip"), ("All files", "*.*")],
+                initialfile="completion_results.zip"
             )
             if save_path:
                 try:
-                    shutil.copy2(json_path, save_path)
-                    print(f"✅ Fichier téléchargé: {save_path}")
+                    shutil.copy2(zip_path, save_path)
+                    print(f"✅ Package téléchargé: {save_path}")
                     download_window.destroy()
                 except Exception as e:
                     print(f"❌ Erreur lors du téléchargement: {str(e)}")
         
         download_button = customtkinter.CTkButton(
             download_window,
-            text="📥 Télécharger le JSON",
-            command=download_json,
+            text="📥 Télécharger le package ZIP",
+            command=download_zip,
             fg_color="#2ecc71",
             hover_color="#27ae60",
             text_color="white",
@@ -603,13 +603,17 @@ class DocuWriterApp(customtkinter.CTk):
                     # Fermer la fenêtre de progression
                     self.close_progress_window()
                     
-                    # 5. Proposer de télécharger le fichier JSON généré
-                    json_output_path = os.path.join(project_root, "jsons", "completed_document.json")
-                    if os.path.exists(json_output_path):
+                    # 5. Proposer de télécharger le package ZIP généré
+                    zip_output_path = os.path.join(project_root, "jsons", "completion_results.zip")
+                    if os.path.exists(zip_output_path):
                         # Afficher le dialogue dans le thread principal
-                        self.after(100, lambda: self.show_download_dialog(json_output_path))
+                        self.after(100, lambda: self.show_download_dialog(zip_output_path))
                     else:
-                        print("⚠️ Fichier JSON non trouvé")
+                        print("⚠️ Package ZIP non trouvé")
+                        # Fallback: vérifier si le JSON existe au moins
+                        json_output_path = os.path.join(project_root, "jsons", "completed_document.json")
+                        if os.path.exists(json_output_path):
+                            print("   [INFO] Seul le JSON a été généré")
                 else:
                     self.close_progress_window()
                     print(f"\n❌ Erreur lors de l'exécution de send_to_ai.py (code: {result_ai.returncode})")

@@ -24,6 +24,8 @@ services:
     command: ["${OLLAMA_MODEL:-llama3.1}"]
     restart: "no"
   docuwriter:
+    ports:
+      - "8000:8000"
     build:
       context: .
       dockerfile: ./docker/Dockerfile

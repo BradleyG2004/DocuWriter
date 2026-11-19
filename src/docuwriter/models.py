@@ -15,6 +15,8 @@ class Placeholder:
     page_number: int | None = None
     bbox: tuple[float, float, float, float] | None = None
     mode: str = "replace"
+    start_offset: int | None = None
+    end_offset: int | None = None
 
 
 @dataclass(frozen=True)
@@ -46,6 +48,10 @@ class InteractiveMarker:
     bbox: tuple[float, float, float, float] | None = None
     has_existing_tags: bool = False
     mode: str = "replace"
+    paragraph_index: int | None = None
+    start_offset: int | None = None
+    end_offset: int | None = None
+    table_coords: tuple[int, int, int] | None = None
 
 
 @dataclass(frozen=True)

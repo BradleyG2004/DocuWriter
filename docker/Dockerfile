@@ -5,4 +5,5 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY src/ /app/src/
 ENV PYTHONPATH=/app/src PYTHONUNBUFFERED=1
-ENTRYPOINT ["python", "-m", "docuwriter.pipeline"]
+EXPOSE 8000
+CMD ["uvicorn", "docuwriter.web:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -6,12 +6,18 @@
   <title>DocuWriter — Liseuse</title>
   <style>
     body { font-family: system-ui, sans-serif; margin: 0; color: #202124; }
-    main { display: grid; grid-template-columns: 280px 1fr; min-height: 100vh; }
+    main { display: grid; grid-template-columns: 280px 1fr 320px; min-height: 100vh; }
     aside { padding: 1rem; background: #f3f5f7; } section { padding: 1.5rem; }
     button { margin: .25rem 0; padding: .5rem .75rem; cursor: pointer; }
     textarea { display: block; width: min(700px, 100%); min-height: 70px; margin: .5rem 0; }
     .marker { border: 1px solid #ddd; padding: 1rem; margin: 1rem 0; }
     progress { width: 100%; }
+    .reader-block { position: relative; padding: .25rem; }
+    .table-grid { display: grid; border: 1px solid #ccc; }
+    .table-cell { border: 1px solid #ccc; min-height: 36px; padding: .5rem; }
+    .selection-bubble { position: fixed; z-index: 1000; background: #202124; color: white; }
+    .inspector-marker { background: white; border: 1px solid #ddd; padding: .75rem; margin: .5rem 0; }
+    .insert-button { margin: .35rem 0; }
   </style>
 </head>
 <body>
@@ -22,13 +28,19 @@
       <label>Documents de contexte <input id="context-files" type="file" accept=".docx,.pdf" multiple></label>
       <button id="upload">Charger le document</button>
       <button id="demo">Charger un exemple de démo</button>
-      <button id="generate" disabled>Générer les propositions</button>
+      <p id="tag-badge">Détection des balises non effectuée</p>
+      <button id="export-template" disabled>Exporter le modèle balisé</button>
+      <button id="generate" disabled>Lancer la génération IA</button>
       <p id="progress"></p><progress id="bar" value="0" max="1"></progress>
     </aside>
     <section>
       <h2>Liseuse — Avant / Après</h2>
       <div id="reader"><p>Chargez un document ou l'exemple de démo.</p></div>
     </section>
+    <aside>
+      <h2>Marqueurs actifs</h2>
+      <div id="marker-list"></div>
+    </aside>
   </main>
   <script src="/static/app.js"></script>
 </body>

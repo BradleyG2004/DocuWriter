@@ -107,25 +107,75 @@ def parse_target_docx(docx_path: Path) -> list[Placeholder]:
 
 def serialize_docx_for_reader(docx_path: Path) -> dict[str, object]:
     doc = Document(docx_path)
-    blocks: list[DocumentBlock] = []
     markers: list[InteractiveMarker] = []
-    for index, paragraph in enumerate(doc.paragraphs):
-        if not paragraph.text.strip():
-            continue
-        style = paragraph.style.name if paragraph.style else ""
-        block_type = "heading" if style == "Title" or style.startswith("Heading") else "paragraph"
-        blocks.append(DocumentBlock(block_type, paragraph.text, "", None, []))
-        for occurrence, match in enumerate(TAG_PATTERN.finditer(paragraph.text)):
-            marker = InteractiveMarker(
-                f"paragraph_{index}_{occurrence}", "", match.group(1).strip(),
-                match.group(0), "paragraph", has_existing_tags=True,
-            )
-            markers.append(marker)
-            blocks[-1].marker_ids.append(marker.placeholder_id)
+    tracker = SectionTracker()
+    blocks: list[dict[str, object]] = []
+    paragraph_index = 0
+    table_index = 0
+    for item in doc.iter_inner_content():
+        if isinstance(item, Paragraph):
+            tracker.update(item)
+            text = item.text
+            if not text.strip():
+                continue
+            style = item.style.name if item.style else ""
+            heading_match = re.match(r"Heading\s+(\d+)", style)
+            level = 1 if style == "Title" else (int(heading_match.group(1)) if heading_match else 0)
+            block_type = "heading" if level else "paragraph"
+            marker_ids: list[str] = []
+            for occurrence, match in enumerate(TAG_PATTERN.finditer(text)):
+                marker_id = f"paragraph_{paragraph_index}_{occurrence}"
+                marker_ids.append(marker_id)
+                markers.append(InteractiveMarker(
+                    marker_id, tracker.path, match.group(1).strip(),
+                    match.group(0), "paragraph", None, None, True,
+                    "replace", paragraph_index,
+                ))
+            blocks.append({
+                "block_id": f"docx-p-{paragraph_index}",
+                "block_type": block_type,
+                "text": text,
+                "section_path": tracker.path,
+                "level": level,
+                "paragraph_index": paragraph_index,
+                "table_index": None,
+                "rows": [],
+                "page_number": None,
+                "marker_ids": marker_ids,
+            })
+            paragraph_index += 1
+        elif hasattr(item, "rows"):
+            rows = [[cell.text for cell in row.cells] for row in item.rows]
+            text = "\n".join(" | ".join(row) for row in rows)
+            marker_ids = []
+            for row_index, row in enumerate(item.rows):
+                for col_index, cell in enumerate(row.cells):
+                    for occurrence, match in enumerate(TAG_PATTERN.finditer(cell.text)):
+                        marker_id = f"table_{table_index}_{row_index}_{col_index}_{occurrence}"
+                        marker_ids.append(marker_id)
+                        markers.append(InteractiveMarker(
+                            marker_id, tracker.path, match.group(1).strip(),
+                            match.group(0), "table", None, None, True,
+                            "table_cell", None, None, None,
+                            (table_index, row_index, col_index),
+                        ))
+            blocks.append({
+                "block_id": f"docx-t-{table_index}",
+                "block_type": "table",
+                "text": text,
+                "section_path": tracker.path,
+                "level": 0,
+                "paragraph_index": None,
+                "table_index": table_index,
+                "rows": rows,
+                "page_number": None,
+                "marker_ids": marker_ids,
+            })
+            table_index += 1
     return {
         "file": docx_path.name,
         "file_type": "docx",
-        "blocks": [vars(block) for block in blocks],
+        "blocks": blocks,
         "markers": [vars(marker) for marker in markers],
     }
 

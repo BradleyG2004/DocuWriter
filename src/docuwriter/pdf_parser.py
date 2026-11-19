@@ -106,8 +106,10 @@ def serialize_pdf_for_reader(pdf_path: Path) -> dict[str, Any]:
         placeholder.placeholder_id, placeholder.section_path, placeholder.original_hint,
         placeholder.raw_tag, placeholder.location_type, placeholder.page_number,
         placeholder.bbox, True,
+        "replace", None, None, None, placeholder.table_coords,
     ) for placeholder in placeholders}
-    blocks: list[DocumentBlock] = []
+    blocks: list[dict[str, Any]] = []
+    block_counter = 0
     with fitz.open(pdf_path) as document:
         for page_number, page in enumerate(document, 1):
             for raw_block in _page_blocks(page):
@@ -119,21 +121,28 @@ def serialize_pdf_for_reader(pdf_path: Path) -> dict[str, Any]:
                     if marker.page_number == page_number and marker.raw_tag in text
                 ]
                 block_type = "heading" if _block_font_size(raw_block) >= 14 else "paragraph"
+                level = 1 if block_type == "heading" else 0
                 section_path = next(
                     (marker.section_path for marker in marker_map.values()
                      if marker.placeholder_id in block_markers), ""
                 )
-                blocks.append(DocumentBlock(
-                    block_type, text, section_path, page_number, block_markers
-                ))
+                blocks.append({
+                    "block_id": f"pdf-p{page_number}-b{block_counter}",
+                    "block_type": block_type,
+                    "text": text,
+                    "section_path": section_path,
+                    "level": level,
+                    "paragraph_index": block_counter,
+                    "table_index": None,
+                    "rows": [],
+                    "page_number": page_number,
+                    "marker_ids": block_markers,
+                })
+                block_counter += 1
     return {
         "file": pdf_path.name,
         "file_type": "pdf",
-        "blocks": [
-            {"type": block.block_type, "text": block.text, "section_path": block.section_path,
-             "page_number": block.page_number, "marker_ids": block.marker_ids}
-            for block in blocks
-        ],
+        "blocks": blocks,
         "markers": [vars(marker) for marker in marker_map.values()],
     }
 

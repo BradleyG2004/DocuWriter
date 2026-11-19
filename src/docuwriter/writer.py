@@ -104,7 +104,94 @@ def apply_interactive_replacements_to_docx(
     pairs: list[ReplacementPair],
     highlight: bool = True,
 ) -> int:
-    return apply_replacements_to_docx(source_docx, output_docx, placeholders, pairs, highlight)
+    doc = Document(source_docx)
+    pair_map = {pair.placeholder_id: pair for pair in pairs}
+    count = 0
+    for placeholder in placeholders:
+        pair = pair_map.get(placeholder.placeholder_id)
+        if pair is None:
+            continue
+        if placeholder.mode == "selection":
+            if placeholder.paragraph_index is None:
+                continue
+            paragraphs = doc.paragraphs
+            if placeholder.paragraph_index >= len(paragraphs):
+                continue
+            paragraph = paragraphs[placeholder.paragraph_index]
+            text = paragraph.text
+            start = placeholder.start_offset
+            end = placeholder.end_offset
+            if start is not None and end is not None and 0 <= start <= end <= len(text):
+                _replace_paragraph_preserving_style(
+                    paragraph, text[:start] + pair.proposed_replacement + text[end:], highlight
+                )
+                count += 1
+        elif placeholder.mode == "insert_after":
+            index = placeholder.paragraph_index
+            target = doc.paragraphs[index]._p if index is not None and 0 <= index < len(doc.paragraphs) else (
+                doc.paragraphs[-1]._p if doc.paragraphs else doc.add_paragraph()._p
+            )
+            new_paragraph = doc.add_paragraph(pair.proposed_replacement)
+            target.addnext(new_paragraph._p)
+            if highlight:
+                for run in new_paragraph.runs:
+                    run.font.highlight_color = WD_COLOR_INDEX.YELLOW
+            count += 1
+        elif placeholder.mode == "table_cell" and placeholder.table_coords:
+            table_index, row_index, col_index = placeholder.table_coords
+            if table_index < len(doc.tables) and row_index < len(doc.tables[table_index].rows):
+                cell = doc.tables[table_index].rows[row_index].cells[col_index]
+                cell.text = ""
+                run = cell.paragraphs[0].add_run(pair.proposed_replacement)
+                if highlight:
+                    run.font.highlight_color = WD_COLOR_INDEX.YELLOW
+                count += 1
+        elif placeholder.raw_tag:
+            count += _replace_sequence(
+                doc.paragraphs, [placeholder], pair_map, highlight
+            )
+    output_docx.parent.mkdir(parents=True, exist_ok=True)
+    doc.save(output_docx)
+    return count
+
+
+def export_tagged_template_docx(
+    source_docx: Path,
+    output_docx: Path,
+    markers: list[InteractiveMarker],
+) -> Path:
+    doc = Document(source_docx)
+    for marker in sorted(markers, key=lambda item: (
+        item.paragraph_index if item.paragraph_index is not None else -1,
+        item.end_offset if item.end_offset is not None else -1,
+    ), reverse=True):
+        tag = f"<here>{marker.user_instruction}</here>"
+        if marker.mode == "selection":
+            if marker.paragraph_index is None or marker.start_offset is None or marker.end_offset is None:
+                continue
+            if 0 <= marker.paragraph_index < len(doc.paragraphs):
+                paragraph = doc.paragraphs[marker.paragraph_index]
+                text = paragraph.text
+                start = marker.start_offset
+                end = marker.end_offset
+                if 0 <= start <= end <= len(text):
+                    _replace_paragraph_preserving_style(
+                        paragraph, text[:start] + tag + text[end:], False
+                    )
+        elif marker.mode == "insert_after":
+            index = marker.paragraph_index
+            target = doc.paragraphs[index]._p if index is not None and 0 <= index < len(doc.paragraphs) else (
+                doc.paragraphs[-1]._p if doc.paragraphs else doc.add_paragraph()._p
+            )
+            new_paragraph = doc.add_paragraph(tag)
+            target.addnext(new_paragraph._p)
+        elif marker.mode == "table_cell" and marker.table_coords:
+            table_index, row_index, col_index = marker.table_coords
+            if table_index < len(doc.tables) and row_index < len(doc.tables[table_index].rows):
+                doc.tables[table_index].rows[row_index].cells[col_index].text = tag
+    output_docx.parent.mkdir(parents=True, exist_ok=True)
+    doc.save(output_docx)
+    return output_docx
 
 
 def apply_replacements_to_document(
@@ -134,6 +221,8 @@ def export_tagged_template_document(
     if source_document.suffix.lower() == ".pdf":
         from .pdf_writer import export_tagged_template_pdf
         return export_tagged_template_pdf(source_document, output_document, markers)
+    if source_document.suffix.lower() == ".docx":
+        return export_tagged_template_docx(source_document, output_document, markers)
     raise ValueError(f"Unsupported document format: {source_document.suffix}")
 
 

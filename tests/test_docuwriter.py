@@ -16,7 +16,11 @@ from docuwriter.pdf_parser import load_pdf_context_chunks, parse_target_pdf
 from docuwriter.retriever import BM25ContextRetriever
 from docuwriter.pdf_writer import apply_replacements_to_pdf
 from docuwriter.web import app
-from docuwriter.writer import apply_replacements_to_docx
+from docuwriter.writer import (
+    apply_interactive_replacements_to_docx,
+    apply_replacements_to_docx,
+    export_tagged_template_docx,
+)
 
 
 class FakeResponse:
@@ -42,6 +46,92 @@ class FakeProvider:
 
 
 class DocuWriterTests(unittest.TestCase):
+    def test_docx_interactive_markers_tag_export_and_final(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "blank.docx"
+            tagged = root / "tagged.docx"
+            final = root / "final.docx"
+            document = Document()
+            document.add_heading("Architecture", level=1)
+            document.add_paragraph("PostgreSQL est la base de données principale.")
+            document.add_paragraph("Ajouter le plan sécurité après ce texte.")
+            document.add_table(rows=1, cols=2)
+            document.tables[0].cell(0, 0).text = "Composant"
+            document.tables[0].cell(0, 1).text = "Protocole"
+            document.save(source)
+
+            markers = [
+                type("Marker", (), {})(),
+            ]
+            from docuwriter.models import InteractiveMarker, Placeholder
+            selection = InteractiveMarker(
+                "selection-1", "Architecture", "Décrire PostgreSQL",
+                "", "paragraph", None, None, False, "selection",
+                1, 0, 11, None,
+            )
+            insertion = InteractiveMarker(
+                "insert-1", "Architecture", "Ajouter sécurité",
+                "", "paragraph", None, None, False, "insert_after",
+                2,
+            )
+            table = InteractiveMarker(
+                "table-1", "Architecture", "Préciser le protocole",
+                "", "table", None, None, False, "table_cell",
+                None, None, None, (0, 0, 1),
+            )
+            markers = [selection, insertion, table]
+
+            export_tagged_template_docx(source, tagged, markers)
+            tagged_text = "\n".join(p.text for p in Document(tagged).paragraphs)
+            tagged_text += "\n".join(
+                cell.text for table_doc in Document(tagged).tables
+                for row in table_doc.rows for cell in row.cells
+            )
+            self.assertGreaterEqual(tagged_text.count("<here>"), 3)
+
+            placeholders = [
+                Placeholder(
+                    "selection-1", "Architecture", "Décrire PostgreSQL", "",
+                    "paragraph", 1, None, None, None, "selection", 0, 11,
+                ),
+                Placeholder(
+                    "insert-1", "Architecture", "Ajouter sécurité", "",
+                    "paragraph", 2, None, None, None, "insert_after",
+                ),
+                Placeholder(
+                    "table-1", "Architecture", "Préciser le protocole", "",
+                    "table", None, (0, 0, 1), None, None, "table_cell",
+                ),
+            ]
+            pairs = [
+                ReplacementPair(p.placeholder_id, p.section_path, p.location_type,
+                                p.raw_tag, replacement)
+                for p, replacement in zip(placeholders, [
+                    "Base PostgreSQL 15",
+                    "Authentification OAuth2 / JWT RS256",
+                    "HTTPS TLS 1.3",
+                ])
+            ]
+            count = apply_interactive_replacements_to_docx(
+                source, final, placeholders, pairs, highlight=True
+            )
+            self.assertEqual(count, 3)
+            result = Document(final)
+            text = "\n".join(p.text for p in result.paragraphs)
+            text += "\n".join(
+                cell.text for table_doc in result.tables
+                for row in table_doc.rows for cell in row.cells
+            )
+            self.assertIn("Base PostgreSQL 15", text)
+            self.assertIn("Authentification OAuth2 / JWT RS256", text)
+            self.assertIn("HTTPS TLS 1.3", text)
+            self.assertFalse(any("<here>" in p.text for p in result.paragraphs))
+            yellow = any(
+                run.font.highlight_color == WD_COLOR_INDEX.YELLOW
+                for p in result.paragraphs for run in p.runs
+            )
+            self.assertTrue(yellow)
     def test_parser_headings_tables_and_multiline(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "target.docx"

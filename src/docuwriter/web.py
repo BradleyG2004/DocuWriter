@@ -46,10 +46,19 @@ def _pair(data: dict[str, Any], placeholder: Placeholder) -> ReplacementPair:
 
 def _session_payload(session: Session) -> dict[str, Any]:
     payload = serialize_document_for_reader(session.source)
+    markers = []
+    for placeholder in session.placeholders:
+        marker = _marker(placeholder)
+        marker.update({
+            "placeholder_id": placeholder.placeholder_id,
+            "user_instruction": placeholder.original_hint,
+            "has_existing_tags": bool(placeholder.raw_tag),
+        })
+        markers.append(marker)
     payload.update({
         "session_id": session.session_id,
         "filename": session.source.name,
-        "markers": [_marker(placeholder) for placeholder in session.placeholders],
+        "markers": markers,
     })
     return payload
 
@@ -69,12 +78,7 @@ def _create_session(root: Path) -> Session:
     )
     if source is None:
         raise ValueError("No DOCX or PDF template found")
-    settings = Settings(
-        root_dir=root,
-        context_dir=root / "context",
-        tocomplete_dir=root / "tocomplete",
-        output_dir=root / "output",
-    )
+    settings = Settings.from_env(root)
     session = Session(uuid4().hex, root, source, settings, parse_target_document(source))
     SESSIONS[session.session_id] = session
     return session
@@ -146,12 +150,29 @@ def create_app() -> FastAPI:
     def add_marker(session_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         session = _get_session(session_id)
         marker_id = payload.get("placeholder_id", uuid4().hex)
+        table_coords = tuple(payload["table_coords"]) if payload.get("table_coords") else None
+        page_number = payload.get("page_number")
+        bbox = tuple(payload["bbox"]) if payload.get("bbox") else None
+        if session.source.suffix.lower() == ".pdf" and payload.get("raw_tag"):
+            import fitz
+            with fitz.open(session.source) as document:
+                for candidate_page, page in enumerate(document, 1):
+                    matches = page.search_for(str(payload["raw_tag"]))
+                    if matches:
+                        page_number = candidate_page
+                        rect = matches[0]
+                        bbox = (rect.x0, rect.y0, rect.x1, rect.y1)
+                        break
         placeholder = Placeholder(
-            marker_id, payload.get("section_path", ""), payload.get("original_hint", ""),
+            marker_id, payload.get("section_path", ""), payload.get("user_instruction", payload.get("original_hint", "")),
             payload.get("raw_tag", ""), payload.get("location_type", "pdf"),
-            page_number=payload.get("page_number"),
-            bbox=tuple(payload["bbox"]) if payload.get("bbox") else None,
+            page_number=page_number,
+            bbox=bbox,
             mode=payload.get("mode", "replace"),
+            paragraph_index=payload.get("paragraph_index"),
+            start_offset=payload.get("start_offset"),
+            end_offset=payload.get("end_offset"),
+            table_coords=table_coords,
         )
         session.placeholders.append(placeholder)
         return _marker(placeholder)
@@ -170,9 +191,15 @@ def create_app() -> FastAPI:
                  if item.get("placeholder_id") in marker_map]
         output_dir = session.settings.output_dir
         output_document = output_dir / f"completed_{session.source.name}"
-        apply_replacements_to_document(
+        if session.source.suffix.lower() == ".docx":
+            from .writer import apply_interactive_replacements_to_docx
+            apply_interactive_replacements_to_docx(
+                session.source, output_document, placeholders, pairs, payload.get("highlight", True)
+            )
+        else:
+            apply_replacements_to_document(
             session.source, output_document, placeholders, pairs, payload.get("highlight", True)
-        )
+            )
         report = CompletionReport(
             0.0, len(placeholders), len(pairs), 0, 0, 1.0, pairs
         )
@@ -187,19 +214,21 @@ def create_app() -> FastAPI:
     @app.post("/api/sessions/{session_id}/export-template")
     def export_template(session_id: str, payload: dict[str, Any]) -> dict[str, str]:
         session = _get_session(session_id)
-        if session.source.suffix.lower() != ".pdf":
-            raise HTTPException(status_code=415, detail="Template export is currently for PDF")
         markers = [
             InteractiveMarker(
                 item.get("placeholder_id", uuid4().hex),
                 item.get("section_path", ""),
                 item.get("user_instruction", item.get("original_hint", "")),
                 item.get("raw_tag", ""),
-                item.get("location_type", "pdf"),
+                item.get("location_type", "paragraph"),
                 item.get("page_number"),
                 tuple(item["bbox"]) if item.get("bbox") else None,
                 item.get("has_existing_tags", False),
                 item.get("mode", "replace"),
+                item.get("paragraph_index"),
+                item.get("start_offset"),
+                item.get("end_offset"),
+                tuple(item["table_coords"]) if item.get("table_coords") else None,
             )
             for item in payload.get("markers", [])
         ]

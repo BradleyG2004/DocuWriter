@@ -1,15 +1,14 @@
-# Keep this .gitignore itself
-!/.gitignore
+.env
+__pycache__/
+.pytest_cache/
+~$*.docx
 
-# Unignore the specified directories but ignore their contents
-!/context/
 /context/*
-!/jsons/
-/jsons/*
-!/docs/
-!/docs/**
-!/tocomplete/
+!/context/
+!/context/.gitkeep
 /tocomplete/*
-
-# Keep .gitkeep files to preserve directory structure
-!**/.gitkeep
+!/tocomplete/
+!/tocomplete/.gitkeep
+/output/*
+!/output/
+!/output/.gitkeep

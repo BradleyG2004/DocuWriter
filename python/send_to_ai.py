@@ -1,7 +1,9 @@
 ﻿import os
 import re
 import json
-import requests
+import ollama
+import zipfile
+from docx import Document
 
 
 def load_json(path):
@@ -82,12 +84,12 @@ def extract_placeholders_from_section(section, placeholders, path_prefix=""):
 
 
 
-def complete_text_with_ai(context_text, placeholders_batch, model="llama3.1"):
+
+
+def complete_text_with_ai(context_text, placeholders_batch, model_name="llama3.1:8b"):
     """
-    Traite un lot de placeholders à la fois
+    Traite un lot de placeholders à la fois avec Ollama
     """
-    host = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-    
     # Construire la liste des placeholders pour le prompt
     placeholders_text = ""
     for i, ph in enumerate(placeholders_batch):
@@ -95,81 +97,182 @@ def complete_text_with_ai(context_text, placeholders_batch, model="llama3.1"):
         original = ph.get("original", "")
         placeholders_text += f"\n[{i+1}] Section: {section_path}\nOriginal: {original[:200]}...\n"
 
-    prompt = f"""
-You are an assistant whose job is to replace placeholder zones in a document.
-You will be given a context (background documents) and a list of placeholder zones
-that need to be replaced with concrete, adapted content derived from the context.
+    prompt = f"""Vous êtes un assistant de documentation technique. Votre rôle est de générer le contenu des sections de documentation en vous basant strictement sur les informations extraites des documents fournis (cadrage, spécifications, manuel, fichiers d'environnement).
 
-Instructions:
-- For each placeholder, provide a replacement text adapted to the context
-- Return a VALID JSON object ONLY (no comments, no additional text) with this structure:
-  {{
-    "replacements": [
-      {{
-        "index": 0,
-        "replacement": "the replacement text"
-      }}
-    ]
-  }}
+CONSIGNES IMPORTANTES :
+- Vous devez fournir EXACTEMENT {len(placeholders_batch)} remplacements (un pour chaque zone marquée par <here></here>)
+- Le style doit être concis, structuré et professionnel
+- Rédigez dans la langue majoritaire dans le contexte
+- Basez-vous fortement sur les informations présentes dans le contexte fourni afin d'appuyer et d'etayer vos propositions
+- N'inventez PAS d'informations non présentes dans le contexte
+- Chaque remplacement doit faire 3 à 5 phrases
 
-IMPORTANT: 
-- Output VALID JSON only (no // comments, no extra text)
-- Provide concise, useful replacement text (2-4 sentences)
-- Each replacement should be self-contained
-- Do NOT use comments like // or /* */ in the JSON
-- Use the index number from the list below
+FORMAT DE SORTIE REQUIS :
+Retournez un objet JSON VALIDE UNIQUEMENT (sans commentaires, sans texte supplémentaire) avec cette structure :
+{{
+  "replacements": [
+    {{
+      "index": 0,
+      "replacement": "Texte de remplacement basé sur le contexte"
+    }},
+    {{
+      "index": 1,
+      "replacement": "Texte de remplacement basé sur le contexte"
+    }}
+    ... (continuez pour tous les {len(placeholders_batch)} emplacements)
+  ]
+}}
 
-Context:
+EXIGENCES CRITIQUES :
+- Sortie JSON VALIDE uniquement (pas de markdown, pas de commentaires, pas de texte supplémentaire)
+- Vous DEVEZ fournir les {len(placeholders_batch)} remplacements (index 0 à {len(placeholders_batch)-1})
+- NE sautez AUCUN index
+- N'ajoutez PAS de commentaires comme // ou /* */
+- Basez chaque réponse sur le contexte fourni ci-dessous
+
+CONTEXTE (documents de référence) :
 {context_text[:5000]}
 
-Placeholders to replace:
+ZONES À COMPLÉTER (VOUS DEVEZ TOUTES LES TRAITER - {len(placeholders_batch)} au total) :
 {placeholders_text}
 
-Remember: OUTPUT VALID JSON ONLY, NO COMMENTS.
+RAPPEL : SORTIE JSON VALIDE AVEC EXACTEMENT {len(placeholders_batch)} REMPLACEMENTS, AUCUN COMMENTAIRE.
 """
 
     try:
-        response = requests.post(
-            f"{host}/api/generate",
-            json={"model": model, "prompt": prompt, "stream": False},
-            timeout=300  # 5 minutes par batch
+        # Appel à Ollama
+        print(f"   [DEBUG] Envoi de {len(placeholders_batch)} placeholders a Ollama...")
+        response = ollama.chat(
+            model=model_name,
+            messages=[
+                {
+                    'role': 'user',
+                    'content': prompt
+                }
+            ]
         )
-    except requests.exceptions.Timeout:
-        return {"error": "Timeout: Le modèle a pris trop de temps à répondre."}
-    except requests.exceptions.RequestException as e:
-        return {"error": f"Erreur de connexion: {str(e)}"}
+        
+        content = response['message']['content'].strip()
+        print(f"   [DEBUG] Reponse brute recue ({len(content)} caracteres)")
+        
+    except Exception as e:
+        print(f"   [ERROR] Exception Ollama: {str(e)}")
+        return {"error": f"Erreur lors de la generation: {str(e)}"}
 
-    if response.status_code != 200:
-        return {"error": f"{response.status_code} - {response.text}"}
-
+    # Parser la réponse JSON
     try:
-        res = response.json()
-        content = res.get("response") if isinstance(res, dict) else None
-        if content is None:
-            content = json.dumps(res)
-    except Exception:
-        content = response.text
-
-    try:
+        # Supprimer les balises markdown si présentes
+        if content.startswith('```'):
+            lines = content.split('\n')
+            content = '\n'.join(lines[1:-1]) if len(lines) > 2 else content
+            print("   [DEBUG] Balises markdown supprimees")
+        
         parsed = json.loads(content)
-    except Exception:
+        print(f"   [DEBUG] JSON parse avec succes")
+    except Exception as e:
+        print(f"   [WARN] Erreur parsing JSON direct: {str(e)}")
         # Nettoyer le contenu avant de le parser
         content_clean = re.sub(r'//.*?$', '', content, flags=re.MULTILINE)
         content_clean = re.sub(r'/\*.*?\*/', '', content_clean, flags=re.DOTALL)
         
         try:
             parsed = json.loads(content_clean)
+            print(f"   [DEBUG] JSON parse apres nettoyage")
         except Exception:
+            print(f"   [WARN] Tentative d'extraction du JSON...")
             m = re.search(r"\{.*\}", content_clean, flags=re.S)
             if m:
                 try:
                     parsed = json.loads(m.group(0))
+                    print(f"   [DEBUG] JSON extrait et parse")
                 except Exception:
+                    print(f"   [ERROR] Impossible de parser le JSON extrait")
                     return {"error": "Could not parse model response as JSON", "raw": content}
             else:
+                print(f"   [ERROR] Aucun JSON trouve dans la reponse")
                 return {"error": "No JSON found in model response", "raw": content}
+    
+    # Vérifier le nombre de remplacements
+    replacements = parsed.get("replacements", [])
+    print(f"   [DEBUG] Nombre de remplacements recus: {len(replacements)}/{len(placeholders_batch)}")
+    
+    if len(replacements) < len(placeholders_batch):
+        print(f"   [WARN] Ollama n'a retourne que {len(replacements)} remplacements sur {len(placeholders_batch)} demandes")
 
     return parsed
+
+
+
+def create_completed_docx(original_docx_path, replacement_pairs, output_path):
+    """
+    Crée un nouveau document Word en remplaçant les placeholders <here>...</here>
+    par les propositions du LLM
+    """
+    print(f"\n[INFO] Creation du document Word complete...")
+    
+    # Charger le document original
+    doc = Document(original_docx_path)
+    
+    # Créer un dictionnaire pour accès rapide aux remplacements
+    replacements_map = {}
+    for pair in replacement_pairs:
+        original_with_tags = pair.get("original_text_with_tags", "")
+        replacement = pair.get("proposed_replacement", "")
+        # Extraire le contenu entre <here> et </here>
+        match = re.search(r"<here>(.*?)</here>", original_with_tags, flags=re.S)
+        if match:
+            original_content = match.group(1).strip()
+            replacements_map[original_content] = replacement
+    
+    print(f"   [DEBUG] {len(replacements_map)} remplacements a appliquer")
+    
+    # Parcourir tous les paragraphes et remplacer
+    replacements_done = 0
+    for para in doc.paragraphs:
+        text = para.text
+        
+        # Vérifier si le paragraphe contient un placeholder
+        if '<here>' in text and '</here>' in text:
+            # Extraire le contenu entre les balises
+            match = re.search(r"<here>(.*?)</here>", text, flags=re.S)
+            if match:
+                original_content = match.group(1).strip()
+                
+                # Chercher le remplacement correspondant
+                if original_content in replacements_map:
+                    replacement_text = replacements_map[original_content]
+                    
+                    # Remplacer tout le contenu du paragraphe
+                    para.text = replacement_text
+                    replacements_done += 1
+                    print(f"   [OK] Remplacement {replacements_done} applique")
+    
+    # Sauvegarder le document complété
+    doc.save(output_path)
+    print(f"   [OK] Document Word complete sauvegarde: {output_path}")
+    print(f"   [OK] {replacements_done}/{len(replacements_map)} remplacements appliques")
+    
+    return replacements_done
+
+
+def create_zip_package(json_path, docx_path, zip_output_path):
+    """
+    Crée un fichier ZIP contenant le JSON et le DOCX
+    """
+    print(f"\n[INFO] Creation du package ZIP...")
+    
+    with zipfile.ZipFile(zip_output_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        # Ajouter le JSON
+        zipf.write(json_path, os.path.basename(json_path))
+        print(f"   [OK] Ajoute: {os.path.basename(json_path)}")
+        
+        # Ajouter le DOCX
+        zipf.write(docx_path, os.path.basename(docx_path))
+        print(f"   [OK] Ajoute: {os.path.basename(docx_path)}")
+    
+    print(f"   [OK] Package ZIP cree: {zip_output_path}")
+    return zip_output_path
+
 
 
 def main():
@@ -208,11 +311,11 @@ def main():
                     "context_path": f"paragraph[{idx}]"
                 })
 
-    print("🔹 Envoi du contexte et du document à l'IA...")
-    print(f"   📊 {len(placeholders)} zones <here>...</here> détectées")
+    print("[INFO] Envoi du contexte et du document a l'IA...")
+    print(f"   [INFO] {len(placeholders)} zones <here>...</here> detectees")
     
-    # Traiter par lots de 5 placeholders à la fois
-    BATCH_SIZE = 5
+    # Traiter par lots de 3 placeholders à la fois (réduit pour améliorer la fiabilité)
+    BATCH_SIZE = 3
     all_replacement_pairs = []
     total_batches = (len(placeholders) + BATCH_SIZE - 1) // BATCH_SIZE
     
@@ -221,12 +324,12 @@ def main():
         end_idx = min(start_idx + BATCH_SIZE, len(placeholders))
         batch = placeholders[start_idx:end_idx]
         
-        print(f"   ⏳ Traitement du lot {batch_num + 1}/{total_batches} ({len(batch)} zones)...")
+        print(f"   [BATCH {batch_num + 1}/{total_batches}] Traitement de {len(batch)} zones...")
         
         model_response = complete_text_with_ai(context_text, batch)
         
         if isinstance(model_response, dict) and model_response.get("error"):
-            print(f"   ⚠️  Erreur pour le lot {batch_num + 1}: {model_response.get('error')}")
+            print(f"   [WARN] Erreur pour le lot {batch_num + 1}: {model_response.get('error')}")
             continue
         
         parsed = model_response if isinstance(model_response, dict) else {}
@@ -258,18 +361,18 @@ def main():
                 
                 all_replacement_pairs.append(pair)
         
-        print(f"   ✅ Lot {batch_num + 1} traité : {len(replacements)} remplacements générés")
+        print(f"   [OK] Lot {batch_num + 1} traite : {len(replacements)} remplacements generes")
 
     if not all_replacement_pairs and total_batches > 0:
         error_result = {
-            "error": "Aucun remplacement n'a pu être généré",
+            "error": "Aucun remplacement n'a pu etre genere",
             "total_placeholders": len(placeholders),
             "total_batches_attempted": total_batches
         }
         output_json_path = os.path.join(json_dir, "completed_document.json")
         with open(output_json_path, "w", encoding="utf-8") as f:
             json.dump(error_result, f, indent=2, ensure_ascii=False)
-        print(f"❌ Erreur : Aucun remplacement généré")
+        print(f"[ERROR] Aucun remplacement genere")
         return
 
     result_json = {
@@ -286,9 +389,41 @@ def main():
     with open(output_json_path, "w", encoding="utf-8") as f:
         json.dump(result_json, f, indent=2, ensure_ascii=False)
 
-    print(f"\n✅ Document complété enregistré dans :")
-    print(f"   - JSON: {output_json_path}")
-    print(f"   📝 {len(all_replacement_pairs)}/{len(placeholders)} remplacements proposés")
+    print(f"\n[OK] JSON genere: {output_json_path}")
+    print(f"   [OK] {len(all_replacement_pairs)}/{len(placeholders)} remplacements proposes")
+    
+    # Générer le document Word complété
+    tocomplete_dir = os.path.join(root_dir, "tocomplete")
+    original_docx = None
+    
+    # Trouver le fichier .docx original
+    if os.path.exists(tocomplete_dir):
+        for f in os.listdir(tocomplete_dir):
+            if f.endswith(".docx") and not f.startswith("~$"):
+                original_docx = os.path.join(tocomplete_dir, f)
+                break
+    
+    if original_docx and os.path.exists(original_docx):
+        output_docx_path = os.path.join(json_dir, "completed_document.docx")
+        
+        try:
+            replacements_done = create_completed_docx(original_docx, all_replacement_pairs, output_docx_path)
+            
+            # Créer le package ZIP
+            zip_output_path = os.path.join(json_dir, "completion_results.zip")
+            create_zip_package(output_json_path, output_docx_path, zip_output_path)
+            
+            print(f"\n[OK] Traitement termine avec succes !")
+            print(f"   - JSON: {output_json_path}")
+            print(f"   - DOCX: {output_docx_path}")
+            print(f"   - ZIP: {zip_output_path}")
+            
+        except Exception as e:
+            print(f"\n[WARN] Erreur lors de la creation du DOCX: {str(e)}")
+            print(f"   [INFO] Le JSON a ete genere: {output_json_path}")
+    else:
+        print(f"\n[WARN] Document original non trouve, seul le JSON a ete genere")
+        print(f"   - JSON: {output_json_path}")
 
 
 if __name__ == "__main__":

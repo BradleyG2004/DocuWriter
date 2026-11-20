@@ -1,6 +1,7 @@
 """Typed domain models."""
 
 from dataclasses import dataclass, field
+from typing import Any, Literal
 
 
 @dataclass(frozen=True)
@@ -52,6 +53,14 @@ class InteractiveMarker:
     start_offset: int | None = None
     end_offset: int | None = None
     table_coords: tuple[int, int, int] | None = None
+    color: str = "#FDE047"
+    selected_text: str = ""
+    review_comments: list[str] = field(default_factory=list)
+    proposed_replacement: str = ""
+
+    @property
+    def marker_id(self) -> str:
+        return self.placeholder_id
 
 
 @dataclass(frozen=True)
@@ -61,6 +70,31 @@ class DocumentBlock:
     section_path: str = ""
     page_number: int | None = None
     marker_ids: list[str] = field(default_factory=list)
+
+
+@dataclass
+class TargetDocumentState:
+    doc_id: str
+    filename: str
+    file_type: Literal["docx", "pdf"]
+    status: Literal["to_fill", "in_validation", "validated"] = "to_fill"
+    generated_context_summary: str = ""
+    blocks: list[dict[str, Any]] = field(default_factory=list)
+    markers: list[InteractiveMarker] = field(default_factory=list)
+    iteration_count: int = 0
+    source_path: str = ""
+    output_path: str = ""
+
+
+@dataclass
+class ContextDocumentState:
+    doc_id: str
+    filename: str
+    file_type: Literal["docx", "pdf"]
+    chunk_count: int = 0
+    preview_excerpt: str = ""
+    blocks: list[dict[str, Any]] = field(default_factory=list)
+    source_path: str = ""
 
 
 @dataclass

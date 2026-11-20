@@ -4,12 +4,13 @@ from abc import ABC, abstractmethod
 import json
 import re
 import time
+from pathlib import Path
 from typing import Any
 
 import requests
 
 from .config import Settings
-from .models import Placeholder, ReplacementPair
+from .models import InteractiveMarker, Placeholder, ReplacementPair
 
 
 def _parse_json(content: str) -> Any:
@@ -114,3 +115,71 @@ def create_provider(settings: Settings) -> CompletionProvider:
     if settings.llm_provider == "openai":
         return OpenAICompatibleProvider(settings)
     raise ValueError(f"Unsupported provider: {settings.llm_provider}")
+
+
+def detect_zones_with_ai(file_path: Path) -> list[InteractiveMarker]:
+    """Detect explicit and deterministic completion zones for a target file.
+
+    Explicit ``<here>`` tags remain authoritative.  For untagged documents the
+    fallback intentionally stays deterministic so the web workflow is usable
+    when an LLM is unavailable.
+    """
+    from .parser import serialize_document_for_reader
+
+    serialized = serialize_document_for_reader(file_path)
+    markers = [
+        InteractiveMarker(
+            item["placeholder_id"], item.get("section_path", ""),
+            item.get("original_hint", item.get("user_instruction", "")),
+            item.get("raw_tag", ""), item.get("location_type", "paragraph"),
+            item.get("page_number"), tuple(item["bbox"]) if item.get("bbox") else None,
+            bool(item.get("has_existing_tags", True)), item.get("mode", "replace"),
+            item.get("paragraph_index"), item.get("start_offset"),
+            item.get("end_offset"), tuple(item["table_coords"]) if item.get("table_coords") else None,
+        )
+        for item in serialized.get("markers", [])
+    ]
+    if markers:
+        return markers
+
+    marker_index = 0
+    for block in serialized.get("blocks", []):
+        text = str(block.get("text", ""))
+        match = re.search(
+            r"\.{3,}|_{3,}|\[[^\]]+\]|À compléter|à remplacer|placeholder",
+            text, re.I,
+        )
+        if match:
+            marker_index += 1
+            markers.append(InteractiveMarker(
+                f"ai_{marker_index}", block.get("section_path", ""),
+                f"Compléter la zone : {match.group(0)}", "", "paragraph",
+                block.get("page_number"), None, False, "selection",
+                block.get("paragraph_index"), match.start(), match.end(), None,
+                selected_text=match.group(0),
+            ))
+        for row in block.get("rows", []):
+            for cell in row:
+                if not str(cell.get("text", "")).strip():
+                    marker_index += 1
+                    markers.append(InteractiveMarker(
+                        f"ai_{marker_index}", block.get("section_path", ""),
+                        "Compléter cette cellule", "", "table",
+                        block.get("page_number"), None, False, "table_cell",
+                        table_coords=(block.get("table_index"), cell.get("row_idx"), cell.get("col_idx")),
+                    ))
+    return markers
+
+
+def build_document_context_with_ai(
+    target_blocks: list[dict[str, Any]],
+    context_text: str,
+) -> str:
+    """Build a compact per-target context summary without requiring a model."""
+    target_text = "\n".join(str(block.get("text", "")) for block in target_blocks)
+    return (
+        "Objet du document : document à compléter à partir de sa structure et de ses zones.\n"
+        f"Structure cible : {target_text[:1200]}\n"
+        f"Informations applicables : {context_text[:2400]}\n"
+        "Règles : conserver le ton et la précision technique du document cible."
+    )

@@ -121,13 +121,13 @@ def serialize_pdf_for_reader(pdf_path: Path) -> dict[str, Any]:
                     if marker.page_number == page_number and marker.raw_tag in text
                 ]
                 block_type = "heading" if _block_font_size(raw_block) >= 14 else "paragraph"
-                level = 1 if block_type == "heading" else 0
+                level = 1 if block_type == "heading" else None
                 section_path = next(
                     (marker.section_path for marker in marker_map.values()
                      if marker.placeholder_id in block_markers), ""
                 )
                 blocks.append({
-                    "block_id": f"pdf-p{page_number}-b{block_counter}",
+                    "block_id": f"blk_{block_counter}",
                     "block_type": block_type,
                     "text": text,
                     "section_path": section_path,

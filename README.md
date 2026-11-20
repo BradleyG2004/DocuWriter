@@ -18,7 +18,7 @@ src/docuwriter/
 ├── llm_client.py   # adapters Ollama/OpenAI
 ├── pdf_writer.py   # rédaction PDF via PyMuPDF
 ├── writer.py       # dispatch DOCX/PDF
-└── pipeline.py     # CLI et orchestration
+└── writer.py       # dispatch DOCX/PDF
 ```
 
 ## Architecture interactive
@@ -26,33 +26,30 @@ src/docuwriter/
 ```mermaid
 flowchart LR
     User[Utilisateur] --> Reader[Liseuse Interactive FastAPI]
-    User --> CLI[Mode Batch CLI]
     Reader --> Parser[Parser DOCX/PDF]
-    CLI --> Parser
     Parser --> BM25[Moteur BM25 mini-RAG]
     BM25 --> Provider[CompletionProvider]
     Provider --> Ollama[Ollama]
     Provider --> OpenAI[OpenAI-compatible]
     Reader --> Writer[Writer préservant le formatage]
-    CLI --> Writer
     Writer --> DOCX[Export .docx complété]
     Writer --> PDF[Export .pdf complété]
     Writer --> JSON[Export completed_document.json]
 ```
 
-Les documents de référence vont dans `context/`, et le document à compléter
-dans `tocomplete/`. Les fichiers `.docx` et `.pdf` sont acceptés ; les fichiers
-Word temporaires `~$*.docx` sont ignorés.
+DocuWriter est une application 100 % interactive : les documents de contexte
+et les documents à remplir sont déposés dans la liseuse FastAPI. Les fichiers
+`.docx` et `.pdf` sont acceptés ; les fichiers Word temporaires `~$*.docx`
+sont ignorés.
 
 ## Utilisation
 
 ```bash
-cp .env.example .env
-PYTHONPATH=src python -m docuwriter.pipeline
+uvicorn docuwriter.web:app --host 0.0.0.0 --port 8000
 ```
 
-Options disponibles : `--provider ollama|openai`, `--model`, `--batch-size`,
-`--no-highlight` et `--no-clean`.
+Ouvrez ensuite `http://localhost:8000` pour charger les piles de contexte et de
+documents à remplir, annoter les zones et valider chaque itération.
 
 Avec Docker :
 

@@ -3,44 +3,99 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>DocuWriter — Liseuse</title>
-  <style>
-    body { font-family: system-ui, sans-serif; margin: 0; color: #202124; }
-    main { display: grid; grid-template-columns: 280px 1fr 320px; min-height: 100vh; }
-    aside { padding: 1rem; background: #f3f5f7; } section { padding: 1.5rem; }
-    button { margin: .25rem 0; padding: .5rem .75rem; cursor: pointer; }
-    textarea { display: block; width: min(700px, 100%); min-height: 70px; margin: .5rem 0; }
-    .marker { border: 1px solid #ddd; padding: 1rem; margin: 1rem 0; }
-    progress { width: 100%; }
-    .reader-block { position: relative; padding: .25rem; }
-    .table-grid { display: grid; border: 1px solid #ccc; }
-    .table-cell { border: 1px solid #ccc; min-height: 36px; padding: .5rem; }
-    .selection-bubble { position: fixed; z-index: 1000; background: #202124; color: white; }
-    .inspector-marker { background: white; border: 1px solid #ddd; padding: .75rem; margin: .5rem 0; }
-    .insert-button { margin: .35rem 0; }
-  </style>
+  <title>DocuWriter</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Patrick+Hand&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
-  <main>
-    <aside>
-      <h1>DocuWriter</h1>
-      <label>Document modèle <input id="target-file" type="file" accept=".docx,.pdf"></label>
-      <label>Documents de contexte <input id="context-files" type="file" accept=".docx,.pdf" multiple></label>
-      <button id="upload">Charger le document</button>
-      <button id="demo">Charger un exemple de démo</button>
-      <p id="tag-badge">Détection des balises non effectuée</p>
-      <button id="export-template" disabled>Exporter le modèle balisé</button>
-      <button id="generate" disabled>Lancer la génération IA</button>
-      <p id="progress"></p><progress id="bar" value="0" max="1"></progress>
-    </aside>
-    <section>
-      <h2>Liseuse — Avant / Après</h2>
-      <div id="reader"><p>Chargez un document ou l'exemple de démo.</p></div>
+  <main class="excalidraw-app" aria-label="Gestionnaire de documents DocuWriter">
+    <nav class="left-nav" aria-label="Dossiers">
+      <button class="folder-nav" data-folder="context" type="button">
+        <img src="/assets/ui/icon-contexte.png" alt="" class="folder-icon">
+        <span>Contexte</span>
+      </button>
+      <button class="folder-nav active" data-folder="targets" type="button">
+        <img src="/assets/ui/icon-a-remplir.png" alt="" class="folder-icon">
+        <span>À remplir</span>
+      </button>
+    </nav>
+
+    <button class="folder-nav trash-nav" data-folder="trash" type="button">
+      <img src="/assets/ui/icon-corbeille.png" alt="" class="trash-icon">
+      <span>Corbeille</span>
+    </button>
+
+    <button class="folder-nav completed-nav" data-folder="completed" type="button">
+      <img src="/assets/ui/icon-completes.png" alt="" class="completed-icon">
+      <span>Complétés</span>
+    </button>
+
+    <section class="central-stage" aria-label="Pile de documents">
+      <div class="document-pile" id="document-pile">
+        <button class="paper-sheet sheet-back sheet-back-3" type="button" data-sheet-index="2" aria-label="Feuille arrière">
+          <span class="sheet-title">NOTES</span>
+        </button>
+        <button class="paper-sheet sheet-back sheet-back-2" type="button" data-sheet-index="1" aria-label="Feuille intermédiaire">
+          <span class="sheet-title">NOTES</span>
+        </button>
+        <article class="paper-sheet sheet-front" id="active-sheet" aria-label="Document actif">
+          <header class="sheet-heading"><span>NOTES</span></header>
+          <div class="sheet-note">
+            <b>IDEA</b>
+            <span class="small-underline"></span>
+            <em>Lorem ipsum dolor sit amet, consectetur</em>
+          </div>
+          <div class="sheet-note note-two">
+            <b>IDEA</b>
+            <span class="small-underline"></span>
+            <em>What seRondad dated codramak</em>
+          </div>
+          <div class="sheet-draft">
+            <b>DRAFT</b>
+            <span class="small-underline"></span>
+            <em>read var ax shornbowy amet samiens</em>
+          </div>
+          <div class="sheet-body">
+            <b>pSSAT –</b>
+            <p>realis ant aquest amcinme omen</p>
+            <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.</p>
+          </div>
+          <button class="hatch-zone zone-1" type="button" data-marker="1" aria-label="Activer le marqueur 1"></button>
+          <button class="hatch-zone zone-2" type="button" data-marker="2" aria-label="Activer le marqueur 2"></button>
+          <button class="hatch-zone zone-3" type="button" data-marker="3" aria-label="Activer le marqueur 3"></button>
+          <button class="hatch-zone zone-4" type="button" data-marker="4" aria-label="Activer le marqueur 4"></button>
+        </article>
+      </div>
+
+      <button id="complete-button" class="complete-button" type="button">Compléter</button>
     </section>
-    <aside>
-      <h2>Marqueurs actifs</h2>
-      <div id="marker-list"></div>
+
+    <aside class="marker-panel" aria-label="Liste des marqueurs">
+      <button class="marker-row" type="button" data-marker="1">Marqueur 1</button>
+      <button class="marker-row selected" type="button" data-marker="2">Marqueur 2</button>
+      <button id="expand-markers" class="marker-row ellipsis" type="button" aria-expanded="false">...</button>
+      <div id="expanded-markers" class="expanded-markers" hidden>
+        <button class="marker-row" type="button" data-marker="3">Marqueur 3</button>
+        <button class="marker-row" type="button" data-marker="4">Marqueur 4</button>
+      </div>
+      <button class="marker-row" type="button" data-marker="n">Marqueur n</button>
     </aside>
+
+    <div class="comment-side" id="comment-side">
+      <svg id="comment-arrow" class="comment-arrow" viewBox="0 0 86 38" aria-hidden="true">
+        <path d="M3 24 C24 25, 44 34, 79 10" fill="none" stroke="#1e1e1e" stroke-width="1.8"/>
+        <path d="M79 10 L69 12 M79 10 L74 20" fill="none" stroke="#1e1e1e" stroke-width="1.6"/>
+      </svg>
+      <section class="comment-bubble" id="comment-bubble" aria-label="Commentaire">
+        <label for="comment-input">Commentaire</label>
+        <textarea id="comment-input" rows="3" aria-label="Note du marqueur"></textarea>
+      </section>
+    </div>
+
+    <input id="target-file" type="file" accept=".docx,.pdf" hidden>
+    <input id="context-files" type="file" accept=".docx,.pdf" multiple hidden>
   </main>
   <script src="/static/app.js"></script>
 </body>

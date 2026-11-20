@@ -112,41 +112,53 @@ def serialize_docx_for_reader(docx_path: Path) -> dict[str, object]:
     blocks: list[dict[str, object]] = []
     paragraph_index = 0
     table_index = 0
+    block_index = 0
     for item in doc.iter_inner_content():
         if isinstance(item, Paragraph):
+            current_paragraph_index = paragraph_index
+            paragraph_index += 1
             tracker.update(item)
             text = item.text
             if not text.strip():
                 continue
             style = item.style.name if item.style else ""
             heading_match = re.match(r"Heading\s+(\d+)", style)
-            level = 1 if style == "Title" else (int(heading_match.group(1)) if heading_match else 0)
+            level = 1 if style == "Title" else (int(heading_match.group(1)) if heading_match else None)
             block_type = "heading" if level else "paragraph"
             marker_ids: list[str] = []
             for occurrence, match in enumerate(TAG_PATTERN.finditer(text)):
-                marker_id = f"paragraph_{paragraph_index}_{occurrence}"
+                marker_id = f"paragraph_{current_paragraph_index}_{occurrence}"
                 marker_ids.append(marker_id)
                 markers.append(InteractiveMarker(
                     marker_id, tracker.path, match.group(1).strip(),
                     match.group(0), "paragraph", None, None, True,
-                    "replace", paragraph_index,
+                    "replace", current_paragraph_index,
                 ))
             blocks.append({
-                "block_id": f"docx-p-{paragraph_index}",
+                "block_id": f"blk_{block_index}",
                 "block_type": block_type,
                 "text": text,
                 "section_path": tracker.path,
                 "level": level,
-                "paragraph_index": paragraph_index,
+                "paragraph_index": current_paragraph_index,
                 "table_index": None,
                 "rows": [],
                 "page_number": None,
                 "marker_ids": marker_ids,
             })
-            paragraph_index += 1
+            block_index += 1
         elif hasattr(item, "rows"):
-            rows = [[cell.text for cell in row.cells] for row in item.rows]
-            text = "\n".join(" | ".join(row) for row in rows)
+            rows = [
+                [
+                    {"row_idx": row_index, "col_idx": col_index, "text": cell.text}
+                    for col_index, cell in enumerate(row.cells)
+                ]
+                for row_index, row in enumerate(item.rows)
+            ]
+            text = "\n".join(
+                " | ".join(str(cell["text"]) for cell in row)
+                for row in rows
+            )
             marker_ids = []
             for row_index, row in enumerate(item.rows):
                 for col_index, cell in enumerate(row.cells):
@@ -160,17 +172,18 @@ def serialize_docx_for_reader(docx_path: Path) -> dict[str, object]:
                             (table_index, row_index, col_index),
                         ))
             blocks.append({
-                "block_id": f"docx-t-{table_index}",
+                "block_id": f"blk_{block_index}",
                 "block_type": "table",
                 "text": text,
                 "section_path": tracker.path,
-                "level": 0,
+                "level": None,
                 "paragraph_index": None,
                 "table_index": table_index,
                 "rows": rows,
                 "page_number": None,
                 "marker_ids": marker_ids,
             })
+            block_index += 1
             table_index += 1
     return {
         "file": docx_path.name,

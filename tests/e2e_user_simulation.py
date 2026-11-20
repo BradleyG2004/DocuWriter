@@ -129,6 +129,7 @@ def attach_monitor(page):
             failures.append(f"HTTP {response.status}: {response.url}")
         if "/api/" in response.url and response.status >= 500:
             raise AssertionError(f"HTTP 500: {response.url}")
+
     page.on("response", check_response)
     return failures
 
@@ -138,17 +139,23 @@ def select_text(page, text: str):
     locator.wait_for()
     locator.evaluate(
         "(element, text) => {"
-        "const walker=document.createTreeWalker(element, NodeFilter.SHOW_TEXT);"
+        "const walker=document.createTreeWalker(element,NodeFilter.SHOW_TEXT);"
         "let node=walker.nextNode();"
-        "while(node){const index=node.textContent.indexOf(text);"
-        "if(index>=0){const range=document.createRange();"
-        "range.setStart(node,index);range.setEnd(node,index+text.length);"
-        "const selection=window.getSelection();selection.removeAllRanges();selection.addRange(range);"
+        "while(node){const i=node.textContent.indexOf(text);"
+        "if(i>=0){const r=document.createRange();r.setStart(node,i);"
+        "r.setEnd(node,i+text.length);const s=window.getSelection();"
+        "s.removeAllRanges();s.addRange(r);"
         "element.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,clientX:300,clientY:300}));"
         "return;}node=walker.nextNode();}}",
         text,
     )
-    page.locator(".selection-bubble").wait_for()
+    page.locator("#floating-popover").wait_for(state="visible")
+
+
+def submit_floating(page, instruction: str):
+    page.locator("#popover-input").fill(instruction)
+    page.locator("#popover-confirm").click()
+    page.locator("#floating-popover").wait_for(state="hidden")
 
 
 def wait_generation(page):
@@ -160,141 +167,44 @@ def wait_generation(page):
 
 def run_scenarios(page, files):
     failures = attach_monitor(page)
-    page.set_viewport_size({"width": 1440, "height": 900})
-    dialog_answers = iter([
-        "Décrire l'architecture démonstrative",
-        "Décrire l'architecture base de données",
-        "Préciser le protocole réseau",
-        "Décrire l'architecture réseau",
-    ])
-    page.on("dialog", lambda dialog: dialog.accept(next(dialog_answers, "Consigne automatique")))
 
     page.goto("http://127.0.0.1:8000", wait_until="networkidle")
-    page.get_by_role("button", name="Charger un exemple de démo").click()
-    page.locator("#reader .reader-block").first.wait_for()
-    assert page.get_by_text("DAT Cloud Platform", exact=False).count() >= 1
+    page.locator("#demo").click()
+    page.locator("#a4-sheet").wait_for(state="visible")
+    assert page.locator("#reader .reader-block").count() > 0
+    assert page.locator("table.doc-table").count() >= 1
     page.screenshot(path=str(SCREENSHOT_DIR / "01_demo_loaded.png"), full_page=True)
-    initial_markers = page.locator("#marker-list .inspector-marker").count()
+
     select_text(page, "Description:")
-    page.get_by_role("button", name="+ Marquer cette sélection").click()
-    page.wait_for_timeout(200)
-    page.evaluate("() => { window.__nativePrompt = window.prompt; window.prompt = () => 'Ajouter une conclusion'; }")
-    page.locator(".insert-button").first.evaluate("(button) => button.click()")
-    page.evaluate("() => { window.prompt = window.__nativePrompt; }")
-    page.wait_for_timeout(300)
-    if page.locator("#marker-list .inspector-marker").count() == initial_markers + 1:
-        page.evaluate(
-            """async () => await addMarker({
-                placeholder_id: crypto.randomUUID(),
-                section_path: 'Insertion',
-                user_instruction: 'Ajouter une conclusion',
-                original_hint: 'Ajouter une conclusion',
-                raw_tag: '',
-                location_type: 'paragraph',
-                mode: 'insert_after',
-                paragraph_index: 0,
-                page_number: null,
-                start_offset: null,
-                end_offset: null,
-                table_coords: null
-            })"""
-        )
-    assert page.locator("#marker-list .inspector-marker").count() == initial_markers + 2
-    titles = page.locator("#marker-list strong").all_text_contents()
-    assert any(title.startswith("#1") for title in titles)
-    assert any(title.startswith("#2") for title in titles)
+    submit_floating(page, "Décrire l'architecture démonstrative")
+    page.locator(".insert-divider").first.locator("button").click(force=True)
+    submit_floating(page, "Ajouter une conclusion")
+    assert page.locator("#marker-list .marker-card").count() >= 2
 
     page.goto("http://127.0.0.1:8000", wait_until="networkidle")
     page.set_input_files("#target-file", str(files["template"]))
     page.set_input_files("#context-files", [str(files["context"])])
-    page.get_by_role("button", name="Charger le document").click()
-    page.locator("#reader .reader-block").first.wait_for()
+    page.locator("#upload").click()
+    page.locator("#a4-sheet").wait_for(state="visible")
     assert "Aucune balise préexistante" in page.locator("#tag-badge").inner_text()
 
     select_text(page, "Architecture de données à remplacer")
-    page.get_by_role("button", name="+ Marquer cette sélection").click()
-    page.wait_for_timeout(200)
-    page.evaluate("() => { window.__nativePrompt = window.prompt; window.prompt = () => 'Ajouter une section sécurité et authentification'; }")
-    page.locator(".insert-button").nth(1).evaluate("(button) => button.click()")
-    page.evaluate("() => { window.prompt = window.__nativePrompt; }")
-    page.wait_for_timeout(200)
-    page.locator(".table-cell").last.click()
-    page.wait_for_timeout(300)
-    if page.locator("#marker-list .inspector-marker").count() == 2:
-        page.evaluate(
-            """async () => await addMarker({
-                placeholder_id: crypto.randomUUID(),
-                section_path: 'Tableau',
-                user_instruction: 'Préciser le protocole réseau',
-                original_hint: 'Préciser le protocole réseau',
-                raw_tag: '',
-                location_type: 'table',
-                mode: 'table_cell',
-                table_coords: [0,1,1],
-                paragraph_index: null,
-                start_offset: null,
-                end_offset: null,
-                page_number: null
-            })"""
-        )
-    page.evaluate(
-        """async () => {
-            state.markers = [];
-            state.replacements = {};
-            await addMarker({
-                placeholder_id: crypto.randomUUID(),
-                section_path: '1 Spécifications du service',
-                user_instruction: 'Décrire l\\'architecture base de données PostgreSQL 15 multi-AZ',
-                original_hint: 'Décrire l\\'architecture base de données PostgreSQL 15 multi-AZ',
-                raw_tag: 'Architecture de données à remplacer',
-                location_type: 'paragraph',
-                mode: 'selection',
-                paragraph_index: 1,
-                start_offset: 0,
-                end_offset: 32,
-                table_coords: null,
-                page_number: null
-            });
-            await addMarker({
-                placeholder_id: crypto.randomUUID(),
-                section_path: '1 Spécifications du service',
-                user_instruction: 'Ajouter une section sécurité et authentification',
-                original_hint: 'Ajouter une section sécurité et authentification',
-                raw_tag: '',
-                location_type: 'paragraph',
-                mode: 'insert_after',
-                paragraph_index: 2,
-                start_offset: null,
-                end_offset: null,
-                table_coords: null,
-                page_number: null
-            });
-            await addMarker({
-                placeholder_id: crypto.randomUUID(),
-                section_path: 'Tableau',
-                user_instruction: 'Préciser le protocole réseau',
-                original_hint: 'Préciser le protocole réseau',
-                raw_tag: '',
-                location_type: 'table',
-                mode: 'table_cell',
-                table_coords: [0,1,1],
-                paragraph_index: null,
-                start_offset: null,
-                end_offset: null,
-                page_number: null
-            });
-        }"""
-    )
+    submit_floating(page, "Décrire l'architecture base de données")
+    page.locator(".insert-divider").nth(1).locator("button").click(force=True)
+    submit_floating(page, "Ajouter une section sécurité et authentification")
+    page.locator("td.table-cell").last.click(force=True)
+    submit_floating(page, "Préciser le protocole réseau")
 
-    marker_cards = page.locator("#marker-list .inspector-marker")
-    assert marker_cards.count() == 3
+    marker_cards = page.locator("#marker-list .marker-card")
+    assert marker_cards.count() >= 3
     marker_cards.nth(0).locator("textarea").fill(
         "Décrire l'architecture base de données PostgreSQL 15 multi-AZ"
     )
+    page.wait_for_timeout(400)
     page.screenshot(path=str(SCREENSHOT_DIR / "02_markers_placed.png"), full_page=True)
 
     with page.expect_download() as download_info:
-        page.get_by_role("button", name="Exporter le modèle balisé").click()
+        page.locator("#export-template").click()
     tagged_path = TEMP_DIR / "modele_balisé.docx"
     download_info.value.save_as(tagged_path)
     tagged_doc = Document(tagged_path)
@@ -305,15 +215,15 @@ def run_scenarios(page, files):
     )
     assert len(re.findall(r"<here>.*?</here>", tagged_text, re.DOTALL)) >= 3
 
-    page.get_by_role("button", name="Lancer la génération IA").click()
+    page.locator("#generate").click()
     wait_generation(page)
-    assert page.locator("#reader article.marker").count() == 3
+    assert page.locator("#reader .ai-suggestion-card").count() >= 3
     page.screenshot(path=str(SCREENSHOT_DIR / "03_generation_done.png"), full_page=True)
 
     manual_text = "Texte édité manuellement — PostgreSQL 15 multi-AZ validé"
     page.locator(".replacement-textarea").first.fill(manual_text)
     with page.expect_download() as download_info:
-        page.get_by_role("button", name="Exporter le document final").last.click()
+        page.locator("#export-final").click()
     final_path = TEMP_DIR / "final.docx"
     download_info.value.save_as(final_path)
     final_doc = Document(final_path)
@@ -326,50 +236,28 @@ def run_scenarios(page, files):
     assert manual_text in final_text
     yellow = any(
         run.font.highlight_color == WD_COLOR_INDEX.YELLOW
-        for paragraph in final_doc.paragraphs for run in paragraph.runs
+        for paragraph in final_doc.paragraphs
+        for run in paragraph.runs
     )
-    for table in final_doc.tables:
-        for row in table.rows:
-            for cell in row.cells:
-                yellow = yellow or any(
-                    run.font.highlight_color == WD_COLOR_INDEX.YELLOW
-                    for paragraph in cell.paragraphs for run in paragraph.runs
-                )
     assert yellow
 
     page.goto("http://127.0.0.1:8000", wait_until="networkidle")
     page.set_input_files("#target-file", str(files["pdf_template"]))
     page.set_input_files("#context-files", [str(files["pdf_context"])])
-    page.get_by_role("button", name="Charger le document").click()
-    page.locator("#reader .page-badge").first.wait_for()
-    badges = page.locator("#reader .page-badge").all_text_contents()
-    assert any("Page 1" in text for text in badges)
-    assert any("Page 2" in text for text in badges)
+    page.locator("#upload").click()
+    page.locator("#a4-sheet").wait_for(state="visible")
+    assert page.locator(".page-separator").count() >= 2
+    separators = page.locator(".page-separator").all_text_contents()
+    assert any("Page 1" in text for text in separators)
+    assert any("Page 2" in text for text in separators)
     page.screenshot(path=str(SCREENSHOT_DIR / "04_pdf_reader.png"), full_page=True)
+
     select_text(page, "Description de l'architecture")
-    page.get_by_role("button", name="+ Marquer cette sélection").click()
-    page.wait_for_timeout(300)
-    if page.locator("#marker-list .inspector-marker").count() == 0:
-        page.evaluate(
-            """async () => await addMarker({
-                placeholder_id: crypto.randomUUID(),
-                section_path: 'Rapport technique',
-                user_instruction: 'Décrire l\\'architecture réseau',
-                original_hint: 'Décrire l\\'architecture réseau',
-                raw_tag: 'Description de l\\'architecture à remplacer',
-                location_type: 'paragraph',
-                mode: 'selection',
-                paragraph_index: 1,
-                start_offset: 0,
-                end_offset: 39,
-                table_coords: null,
-                page_number: 1
-            })"""
-        )
-    page.get_by_role("button", name="Lancer la génération IA").click()
+    submit_floating(page, "Décrire l'architecture réseau")
+    page.locator("#generate").click()
     wait_generation(page)
     with page.expect_download() as download_info:
-        page.get_by_role("button", name="Exporter le document final").last.click()
+        page.locator("#export-final").click()
     pdf_path = TEMP_DIR / "final.pdf"
     download_info.value.save_as(pdf_path)
     pdf = fitz.open(pdf_path)
@@ -380,19 +268,19 @@ def run_scenarios(page, files):
 
     page.goto("http://127.0.0.1:8000", wait_until="networkidle")
     page.set_input_files("#target-file", str(files["pretagged"]))
-    page.get_by_role("button", name="Charger le document").click()
-    page.locator("#reader .reader-block").first.wait_for()
-    assert page.locator("#marker-list .inspector-marker").count() == 2
-    page.get_by_role("button", name="Lancer la génération IA").click()
+    page.locator("#upload").click()
+    page.locator("#a4-sheet").wait_for(state="visible")
+    assert page.locator("#marker-list .marker-card").count() == 2
+    page.locator("#generate").click()
     wait_generation(page)
     with page.expect_download() as download_info:
-        page.get_by_role("button", name="Exporter le document final").last.click()
+        page.locator("#export-final").click()
     pretagged_path = TEMP_DIR / "pretagged_final.docx"
     download_info.value.save_as(pretagged_path)
-    pretagged = Document(pretagged_path)
-    text = "\n".join(p.text for p in pretagged.paragraphs)
+    pretagged_doc = Document(pretagged_path)
+    text = "\n".join(p.text for p in pretagged_doc.paragraphs)
     text += "\n".join(
-        cell.text for table in pretagged.tables
+        cell.text for table in pretagged_doc.tables
         for row in table.rows for cell in row.cells
     )
     assert "<here>" not in text
@@ -417,7 +305,6 @@ def main() -> int:
             context.close()
             browser.close()
         print("E2E SUCCESS: 4/4 scenarios passed")
-        print("Screenshots:")
         for screenshot in sorted(SCREENSHOT_DIR.glob("*.png")):
             print(f"- {screenshot}")
         return 0
